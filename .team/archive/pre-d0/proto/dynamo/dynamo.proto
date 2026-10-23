@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package dynamo;
+
+service KVStore {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+enum Status {
+  OK = 0;
+  NOT_FOUND = 1;
+  QUORUM_FAILED = 2;
+  INVALID = 3;
+}
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  bytes context = 3;
+  uint32 w = 4;
+}
+
+message PutResponse {
+  Status status = 1;
+  bytes context = 2;
+  repeated string written_to = 3;
+}
+
+message GetRequest {
+  string key = 1;
+  uint32 r = 2;
+}
+
+message GetResponse {
+  Status status = 1;
+  repeated bytes values = 2;
+  bytes context = 3;
+  repeated string read_from = 4;
+}
+
+message DeleteRequest {
+  string key = 1;
+  bytes context = 2;
+  uint32 w = 3;
+}
+
+message DeleteResponse {
+  Status status = 1;
+}

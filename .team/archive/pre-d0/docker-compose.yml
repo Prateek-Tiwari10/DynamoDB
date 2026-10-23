@@ -1,0 +1,11 @@
+services:
+  node1:
+    build: .
+    environment:
+      NODE_ID: node1
+      PORT: "50051"
+      DATA_DIR: /data
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./data:/data
