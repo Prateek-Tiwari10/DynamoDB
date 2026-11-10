@@ -31,7 +31,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 _(add a line, remove it when answered)_
 
-- **Meet → Prateek (2026-11-10):** D0-M draft is in `.team/design/D0-M-contracts.md`. Please review the "Needs Prateek" list at the top (9 items: vector clocks + `version.py` owner, gossip states/incarnation, ring fingerprint in gossip entry, proto path, `request_timeout_ms`, `NODE_ID`/`CONFIG` config, WAL-failure exit, tombstone purge + `last_alive` guard, `Locate`/`LocalGet`). Agree or comment so we can add DEC entries.
+- **Meet → Prateek (2026-11-10):** D0-M draft is in `.team/design/D0-M-contracts.md`. Please review the "Needs Prateek" list at the top (17 items, updated 2026-11-10: vector clocks + `version.py` owner, coordinator counter rule, NOT_FOUND returns context, gossip states/incarnation, ring fingerprint in gossip entry, `Membership.state()`/`members()`, drop `on_contact`, DeliverHint own RPC?, proto path, `STATUS_UNSPECIFIED = 0`, `request_timeout_ms`, env-var settings rule, WAL-failure exit, tombstone purge + `last_alive` guard, `Locate`/`LocalGet`, `pyproject.toml` in allowed paths, logging filter vs your logging helper). Agree or comment so we can add DEC entries.
 
 ## Log
 
