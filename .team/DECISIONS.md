@@ -59,3 +59,9 @@ Decision: `dynamo/reqid.py` (Meet) holds the request-id logging filter. Prateek'
 Why: one owner for the filter, no overlap.
 Rejected: a second logging helper in D0-P that also adds the request id.
 Affects: `reqid.py`, D0-P.
+
+## DEC-08 — D0-P contracts: config, clocks, membership, test cluster  (2026-11-12, agreed by Prateek; Meet to confirm, from D0-P)
+Decision: Prateek's half of D0 is frozen as written in `.team/design/D0-P-contracts.md` and `.team/INTERFACES.md`. Changes to shared files: (1) `ClusterConfig` is one frozen dataclass; it gains `snapshot_every` (1000) and `sloppy_quorum` (true), and `data_dir` leaves the config table because it is a per-node flag. (2) `MemberState` becomes `MEMBER_STATE_UNSPECIFIED = 0, ALIVE = 1, SUSPECT = 2, DEAD = 3`. (3) `vclock.increment` is replaced by `advance(clock, node_id, counter, now_ms)`, because the coordinator computes the counter (DEC-02). (4) `Storage.__init__` takes `(data_dir, config)`. (5) An error on the snapshot files keeps the node running; an error on the log file exits it. (6) Everything goes on `main` in small commits, no task branches.
+Why: both halves can now be built against fixed names; an unset enum value must never read as ALIVE; a failed snapshot loses nothing because the log still holds every write.
+Rejected: config as a dict or globals; one branch per task; exiting the node on a snapshot error.
+Affects: `config.py`, `cluster.yaml`, proto, SPEC, INTERFACES, `storage.py`, `build_node` (Meet); D1, D3, D6, D9.

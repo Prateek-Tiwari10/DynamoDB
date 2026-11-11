@@ -52,7 +52,7 @@ Version:
     tombstone: bool     # True = deleted marker
 
 class Storage:
-    def __init__(self, data_dir: str, snapshot_every: int = 1000): ...
+    def __init__(self, data_dir: str, config: ClusterConfig): ...   # uses config.snapshot_every (D0-P 4.6)
     def load(self) -> None                              # startup: snapshot + log replay (section 5.4)
     def get(self, key: str) -> list[Version]            # from the dict only; [] if key unknown
     async def apply(self, key: str, version: Version) -> bool  # write flow (5.1); returns after data is on disk
@@ -95,6 +95,11 @@ success for data that was lost. The client gets a connection error; the other re
 2. Rename it to `snapshot.json` (atomic: either the old snapshot or the new one, never half).
 3. Clear `wal.log` and `fsync`. Reset the line counter to 0.
 
+If step 1 or 2 fails (an error on the snapshot files), the node logs the error and keeps running:
+nothing is lost, because the log still holds every write. The log is not cleared, the counter is
+not reset, and the next write tries the snapshot again. If step 3 fails (an error on the log file),
+the node exits as in 5.1.
+
 ### 5.4 Restart (`load`)
 1. If `snapshot.json` exists, load it into the dict. If not (first start, or fewer than 1000
    writes so far), start with an empty dict.
@@ -111,6 +116,8 @@ success for data that was lost. The client gets a connection error; the other re
 | Broken line left in the file, then a new write | Cannot happen: the file is cut back during restart, so the next line never glues onto a half-line. | `test_append_after_torn_line` |
 | Broken line in the middle of the log | Not a crash but disk corruption. Stop with a clear error instead of guessing. | `test_corrupt_middle_line` |
 | Log write or `fsync` returns an error | Log CRITICAL, exit the process immediately, no retry. Dict untouched, client got no OK. | `test_fsync_failure_exits` |
+| Writing the snapshot fails (disk full, no permission) | Logged as an error, the node keeps running, the write still gets OK. The log is kept and the next write tries again. | `test_snapshot_error_keeps_running` |
+| Clearing the log after a snapshot fails | An error on the log file: CRITICAL and exit, like a failed log write. | `test_clear_log_error_exits` |
 | Crash after the log `fsync` but before the dict update | The write is in the log, so replay restores it. The client got no OK and may retry; the retry just writes the same value again. | `test_kill_after_fsync` |
 | Crash while writing the temp snapshot | Old `snapshot.json` and full log are untouched. Leftover `.tmp` is deleted on restart. | `test_crash_during_snapshot_tmp` |
 | Crash after the rename but before the log is cleared | New snapshot + old log both exist. Replaying the whole log in order over the snapshot ends in the same final state (put a=1, delete a, put a=3 → a=3). | `test_crash_between_rename_and_clear` |

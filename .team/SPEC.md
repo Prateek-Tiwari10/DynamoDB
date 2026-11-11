@@ -107,7 +107,10 @@ dynamo/
 | `dead_after_ms` | 10000 | No heartbeat → DEAD |
 | `handoff_retry_ms` | 5000 | Hint delivery retry period |
 | `vclock_max_entries` | 10 | Prune limit |
-| `data_dir` | `/data/<node_id>` | WAL and snapshot location |
+| `snapshot_every` | 1000 | Log lines between two snapshots |
+| `sloppy_quorum` | true | Use a stand-in node when a preferred one is DEAD (phase 4) |
+
+The data folder is not in `cluster.yaml`: it is `<data-dir>/<node_id>/`, with `/data` in Docker.
 
 Per-node settings: every flag defaults from its env var (`--node-id` / `NODE_ID`, `--config` / `CONFIG`,
 `--port` / `PORT`, `--data-dir` / `DATA_DIR`). `CONFIG` defaults to `cluster.local.yaml`. Startup fails only
@@ -250,7 +253,7 @@ message Member {
   uint64 incarnation = 5;      // the node's boot time in ms
   string ring_fingerprint = 6; // so every node can notice a ring mismatch
 }
-enum MemberState { ALIVE = 0; SUSPECT = 1; DEAD = 2; }
+enum MemberState { MEMBER_STATE_UNSPECIFIED = 0; ALIVE = 1; SUSPECT = 2; DEAD = 3; }
 
 message GossipMessage { string sender = 1; repeated Member members = 2; }
 ```
@@ -274,7 +277,7 @@ Hints live in `hints: dict[str, list[(key, Version)]]` keyed by the real owner.
 
 | Function | Rule |
 |---|---|
-| `increment(clock, node_id)` | `counters[node_id] += 1`, `updated_ms[node_id] = now` |
+| `advance(clock, node_id, counter, now_ms)` | `counters[node_id] = counter`, `updated_ms[node_id] = now_ms`; the coordinator computes `counter` |
 | `compare(a, b)` | `BEFORE` if every counter in a ≤ b and one is <; `AFTER` for the reverse; `EQUAL`; otherwise `CONCURRENT` |
 | `merge(a, b)` | Per node, take the max counter |
 | `prune(clock)` | If more than 10 entries, drop the one with the oldest `updated_ms` |
@@ -297,6 +300,7 @@ On-disk format
 - Snapshot `/data/<node_id>/snapshot.json` every 1,000 log lines; the log is then truncated.
 - Startup: load snapshot, replay the log, then join gossip.
 - A failed log write or `fsync`: log CRITICAL and exit the process (`os._exit(1)`), no retry.
+- A failed snapshot write: log the error and keep running; the next write tries the snapshot again.
 
 ## Request flows
 
