@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -21,7 +22,7 @@ def tombstone() -> Version:
 
 def open_storage(folder, snapshot_every: int = 1000) -> Storage:
     storage = Storage(str(folder), snapshot_every)
-    storage.recover()
+    storage.load()
     return storage
 
 
@@ -90,20 +91,48 @@ def test_close_then_restart(tmp_path):
     assert value_of(open_storage(tmp_path), "a") == b"1"
 
 
-def test_failed_log_write_leaves_dict_untouched(tmp_path, monkeypatch):
+class NodeExited(Exception):
+    """Raised by the fake os._exit, so the test process itself survives."""
+
+
+def test_fsync_failure_exits(tmp_path, monkeypatch, caplog):
     storage = open_storage(tmp_path)
     asyncio.run(storage.apply("a", put(b"old")))
+    fsync_calls = []
 
     def broken_fsync(fd):
+        fsync_calls.append(fd)
         raise OSError("disk full")
 
+    def fake_exit(code):
+        raise NodeExited(code)
+
     monkeypatch.setattr(os, "fsync", broken_fsync)
-    assert asyncio.run(storage.apply("a", put(b"new"))) is False
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    with caplog.at_level(logging.CRITICAL), pytest.raises(NodeExited) as exited:
+        asyncio.run(storage.apply("a", put(b"new")))
     monkeypatch.undo()
 
-    assert value_of(storage, "a") == b"old"
-    assert len(log_lines(tmp_path)) == 1          # the failed line was cut off again
-    assert value_of(open_storage(tmp_path), "a") == b"old"
+    assert exited.value.args == (1,)                  # exit code 1
+    assert len(fsync_calls) == 1                      # no retry
+    assert value_of(storage, "a") == b"old"           # dict untouched
+    assert any(record.levelno == logging.CRITICAL for record in caplog.records)
+
+
+def test_counts(tmp_path):
+    storage = open_storage(tmp_path)
+    assert storage.counts() == (0, 0)
+
+    async def run() -> None:
+        await storage.apply("a", put(b"1"))
+        await storage.apply("b", put(b"2"))
+        await storage.apply("c", put(b"3"))
+        await storage.apply("c", tombstone())
+        await storage.apply("ghost", tombstone())
+
+    asyncio.run(run())
+    assert storage.counts() == (2, 2)                 # a, b live; c, ghost deleted
+    assert open_storage(tmp_path).counts() == (2, 2)
 
 
 # ------------------------------------------------------- broken log lines
@@ -320,11 +349,13 @@ def test_concurrent_puts_same_key(tmp_path):
 # ---------------------------------------------------------------- restart
 
 def test_no_requests_before_load(tmp_path):
-    storage = Storage(str(tmp_path))                  # recover() not called yet
+    storage = Storage(str(tmp_path))                  # load() not called yet
     with pytest.raises(RuntimeError):
         storage.get("a")
     with pytest.raises(RuntimeError):
         asyncio.run(storage.apply("a", put(b"1")))
+    with pytest.raises(RuntimeError):
+        storage.counts()
     assert not (tmp_path / "wal.log").exists()        # the constructor touched nothing
 
 
