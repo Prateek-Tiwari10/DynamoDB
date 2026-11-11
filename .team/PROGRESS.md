@@ -9,7 +9,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 |---|---|---|---|---|---|---|
 | D0-P | Contracts: data, membership, test harness | Prateek | DESIGNING | .team/design/D0-P-contracts.md | 2026-10-23 | restarted clean, old Phase 1 work in .team/archive/pre-d0/ |
 | D0-M | Contracts: request path, server wiring, build | Meet | DESIGNING | .team/design/D0-M-contracts.md | 2026-10-23 | split confirmed by Meet |
-| D1 | Storage engine (WAL + snapshot) | Prateek | TODO | — | 2026-10-23 | |
+| D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-11 | names follow D0-M draft: recover / get / apply / close |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
 | D4 | Ring + static cluster + Docker | Meet | TODO | — | 2026-10-23 | |
@@ -24,7 +24,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D0-P design
+- **Prateek:** D1 implementation (D0-P design still open)
 - **Meet:** D0-M design
 
 ## Blockers / questions for the partner
@@ -42,3 +42,5 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-10-23 23:50  Prateek  D0  split into D0-P (Prateek, DESIGNING) and D0-M (Meet, TODO) — Meet to confirm
 - 2026-10-23 23:58  Meet  D0  split into D0-P / D0-M confirmed
 - 2026-10-23 23:58  Meet  D0-M  TODO → DESIGNING
+- 2026-11-11 19:10  Prateek  D1  TODO → DESIGNED  (design saved; storage names follow D0-M draft)
+- 2026-11-11 19:10  Prateek  D1  DESIGNED → IMPLEMENTING  (started before D0 is frozen, Prateek's call)
