@@ -173,35 +173,35 @@ Known limitations we accept:
 
 ## 9. As built
 
-**Pending — the design changed on 2026-11-11 after the first build (DEC-04, DEC-06); the code does
-not have these yet:**
-1. `recover()` is renamed to `load()`.
-2. A failed log write or `fsync` exits the node (`os._exit(1)`) instead of returning False.
-3. `counts()` is added.
+Built 2026-11-11 and updated 2026-11-12 in `dynamo/storage.py`. Tests: `tests/test_storage.py` (23)
+and `tests/test_storage_crash.py` (6). 28 pass; the timing test runs only on request.
 
-Built 2026-11-11 in `dynamo/storage.py`, tests in `tests/test_storage.py` (22) and
-`tests/test_storage_crash.py` (5). 26 pass, the timing test runs only on request.
+Built as designed: `load / get / apply / counts / close`, one asyncio lock, log `fsync` in a
+thread, snapshot through temp file → `fsync` → rename → clear log, exit with `os._exit(1)` on a log
+write or `fsync` error, tombstones never purged.
 
 What differs from the design, and why:
-- **Names** are `recover / get / apply / close` (Meet's D0-M draft), not `load / read / save / close`.
-- **The constructor does no disk work.** The folder is created and files are opened in `recover()`,
-  because D0-M says constructors only wire objects. `get` and `apply` raise `RuntimeError` before
-  `recover()`; this is what `test_no_requests_before_load` checks.
-- **Failed log write:** `apply` logs the error and returns False (it does not raise). It also cuts
-  the log back to where the line started, so a half-written line cannot stay in the file and get
-  glued to the next write. Meet's D0-M item 13 (exit the node instead) is not agreed yet.
+- **The constructor does no disk work.** The folder is created and files are opened in `load()`,
+  because D0-M says constructors only wire objects. `get`, `apply` and `counts` raise
+  `RuntimeError` before `load()`; this is what `test_no_requests_before_load` checks.
 - **Snapshot trigger is `>=`,** not "equals 1000". After a crash between rename and clear the
   counter restarts at 1000, and the next write must still snapshot.
 - **The folder is fsynced after the rename** (one extra step in 5.3), so the rename itself
   survives a power cut.
 - **The whole snapshot runs in a thread,** not only the log fsync, so gets and heartbeats are not
   frozen while it is written. Writes still wait, because the lock is held.
-- **A broken middle line raises `CorruptLogError`** from `recover()`.
+- **A broken middle line raises `CorruptLogError`** from `load()`.
 - `test_counter_after_restart` uses 6 lines with a limit of 10 instead of 600 with 1000 (same rule,
   faster test).
-- Extra tests not named in section 6: log line format, close then restart, failed log write,
-  broken last line that has a newline, snapshot clears the log.
+- `test_fsync_failure_exits` swaps `os._exit` for a fake so pytest survives; the real exit (code 1,
+  CRITICAL in the log) is checked with a child process in `test_fsync_error_exits_the_node`.
+- Extra tests not named in section 6: log line format, close then restart, broken last line that
+  has a newline, snapshot clears the log.
 - The timing test must point at a real disk: `/tmp` here is tmpfs, where `fsync` costs nothing.
 
-Not built (as the design says): tombstone purge, hints (`hint_for` is always written empty, there
-is no `put_hint` yet), vector-clock reconcile.
+Open point (not in the design): an error while writing the **snapshot** (not the log) does not exit
+the node. The write is already safe in the log and the dict, the error goes up to the caller, and
+the next write tries the snapshot again.
+
+Not built (as the design says): hints (`hint_for` is always written empty, `put_hint` comes with
+D9), vector-clock reconcile (D3).

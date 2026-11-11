@@ -93,3 +93,21 @@ No `Makefile`, `requirements.txt` or `dynamo/__init__.py` yet; tests run with `p
 SSH to github.com on port 22 timed out on this network; pushes went through `ssh.github.com:443`.
 
 **Next step:** Prateek answers Meet's 17 "Needs Prateek" items and designs D0-P, so INTERFACES.md can be frozen.
+
+## Session 4 — 2026-11-11/12 · Prateek · 17 D0-M answers recorded, D1 updated, back in REVIEW
+
+**Done:**
+- Recorded Prateek's answers to Meet's 17 "Needs Prateek" items as DEC-02 to DEC-07 ("agreed by
+  Prateek; Meet to confirm"). Updated `SPEC.md`, `TASKS.md`, `CLAUDE.md`; created `INTERFACES.md`
+  (storage block final, the rest draft). Meet's D0-M doc was not edited.
+- Two answers differ from Meet's doc: item 8 (no `DeliverHint`, reuse `ReplicaPut`) and item 14
+  (no tombstone purge, no `last_alive` guard). Both are listed under Blockers in PROGRESS.md.
+- D1 code: `recover` renamed to `load`, log write / `fsync` error exits the node, `counts()` added.
+  28 tests pass, including the kill -9 tests.
+
+**Working rule from Prateek (2026-11-11):** do not wait for Meet's review. After implementing, set
+REVIEW and move to Prateek's next task; Meet's change requests are done later as follow-ups.
+
+**State left:** D1 = REVIEW. D0-P = DESIGNING with no design doc. D0-M = DESIGNING (Meet).
+
+**Next step:** Prateek designs D0-P (config, logging format, test fixture, gossip proto half), then D3.
