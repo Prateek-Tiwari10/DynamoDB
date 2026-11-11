@@ -79,3 +79,17 @@ Note: Meet has no access to `.team/` now that it is local-only — share PROGRES
   CLAUDE.md got a "What do I need to do?" section that answers per `.team/me`.
   **Meet's setup:** `git pull` (or clone), then `bash .team/setup.sh Meet`, then open Claude Code
   and ask "what do I need to do?" — first task: D0-M.
+
+## Session 3 — 2026-11-11 · Prateek · D1 storage designed, built, in REVIEW
+
+**Done:**
+- Pulled Meet's D0-M draft (3 commits). `.team/INTERFACES.md` and the D0-P design do not exist yet.
+- Saved `.team/design/D1-storage.md`; storage names follow the D0-M draft (`recover / get / apply / close`).
+- Built `dynamo/storage.py`, `tests/test_storage.py`, `tests/test_storage_crash.py` (26 tests pass).
+- Timing: 10,000 puts in 34.90 s = 287 writes/s. Kill -9 demo run by hand: 3 keys back, deleted key NOT_FOUND.
+
+**State left:** D1 = REVIEW (Meet sets DONE). D0-P still DESIGNING, D0-M DESIGNING.
+No `Makefile`, `requirements.txt` or `dynamo/__init__.py` yet; tests run with `python -m pytest tests`.
+SSH to github.com on port 22 timed out on this network; pushes went through `ssh.github.com:443`.
+
+**Next step:** Prateek answers Meet's 17 "Needs Prateek" items and designs D0-P, so INTERFACES.md can be frozen.

@@ -134,7 +134,9 @@ Known limitations we accept:
 - Unit (`tests/test_storage.py`): every test named in section 6, using a temp folder as `data_dir`.
 - Real crash test: start a node as a subprocess, write keys, `kill -9` it, start it again,
   check every acknowledged key is present. Same again with a half-line appended to `wal.log` by hand.
-- Timing: 10,000 puts on one node; record total time and writes per second here: _to be measured_.
+- Timing: 10,000 puts on one node; record total time and writes per second here:
+  **34.90 s = 287 writes/s** (1 KB values, snapshot every 1000, ext4 on NVMe, 2026-11-11).
+  Run it with `STORAGE_TIMING=1 STORAGE_TIMING_DIR=<folder on a real disk> pytest tests/test_storage.py -k timing -s`.
 
 ## 8. Interview questions on this part
 
@@ -166,4 +168,29 @@ Known limitations we accept:
 
 ## 9. As built
 
-_Filled after implementation: what changed from this design and why._
+Built 2026-11-11 in `dynamo/storage.py`, tests in `tests/test_storage.py` (22) and
+`tests/test_storage_crash.py` (5). 26 pass, the timing test runs only on request.
+
+What differs from the design, and why:
+- **Names** are `recover / get / apply / close` (Meet's D0-M draft), not `load / read / save / close`.
+- **The constructor does no disk work.** The folder is created and files are opened in `recover()`,
+  because D0-M says constructors only wire objects. `get` and `apply` raise `RuntimeError` before
+  `recover()`; this is what `test_no_requests_before_load` checks.
+- **Failed log write:** `apply` logs the error and returns False (it does not raise). It also cuts
+  the log back to where the line started, so a half-written line cannot stay in the file and get
+  glued to the next write. Meet's D0-M item 13 (exit the node instead) is not agreed yet.
+- **Snapshot trigger is `>=`,** not "equals 1000". After a crash between rename and clear the
+  counter restarts at 1000, and the next write must still snapshot.
+- **The folder is fsynced after the rename** (one extra step in 5.3), so the rename itself
+  survives a power cut.
+- **The whole snapshot runs in a thread,** not only the log fsync, so gets and heartbeats are not
+  frozen while it is written. Writes still wait, because the lock is held.
+- **A broken middle line raises `CorruptLogError`** from `recover()`.
+- `test_counter_after_restart` uses 6 lines with a limit of 10 instead of 600 with 1000 (same rule,
+  faster test).
+- Extra tests not named in section 6: log line format, close then restart, failed log write,
+  broken last line that has a newline, snapshot clears the log.
+- The timing test must point at a real disk: `/tmp` here is tmpfs, where `fsync` costs nothing.
+
+Not built (as the design says): tombstone purge, hints (`hint_for` is always written empty, there
+is no `put_hint` yet), vector-clock reconcile.
