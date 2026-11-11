@@ -72,7 +72,7 @@ class Storage:
     """All keys of one node, in memory, with a write-ahead log and snapshots on disk."""
 
     def __init__(self, data_dir: str, snapshot_every: int = 1000) -> None:
-        """Remember the settings. Does no disk work; call recover() before anything else."""
+        """Remember the settings. Does no disk work; call load() before anything else."""
         self.data_dir = data_dir
         self.snapshot_every = snapshot_every
         self.wal_path = os.path.join(data_dir, WAL_FILE)
@@ -85,7 +85,7 @@ class Storage:
 
     # ---------------------------------------------------------------- public
 
-    def recover(self) -> None:
+    def load(self) -> None:
         """Rebuild the dict from disk: load the snapshot, then replay the log on top of it.
 
         Must finish before the server accepts requests. Raises CorruptLogError if a line
@@ -97,7 +97,7 @@ class Storage:
         self._data = self._load_snapshot()
         self._line_count = self._replay_log()
         self._log_file = open(self.wal_path, "ab")
-        logger.info("recovered %s: %d keys, %d log lines replayed",
+        logger.info("loaded %s: %d keys, %d log lines replayed",
                     self.data_dir, len(self._data), self._line_count)
 
     def get(self, key: str) -> list[Version]:
@@ -105,28 +105,35 @@ class Storage:
 
         Reads only the dict: no lock and no disk, so it never waits for a write or snapshot.
         """
-        self._require_recovered()
+        self._require_loaded()
         return list(self._data.get(key, []))
 
     async def apply(self, key: str, version: Version) -> bool:
         """Store a version (a put, or a tombstone for a delete).
 
-        Returns True once the write is on disk and in the dict. Returns False if the log
-        could not be written; the dict is then left unchanged.
+        Returns True once the write is on disk and in the dict. If the log cannot be
+        written or fsynced, the node logs CRITICAL and exits at once: there is no retry,
+        because a failed write may have left half a line in the log.
         """
-        self._require_recovered()
+        self._require_loaded()
         line = encode_line(key, version)
         async with self._lock:
             try:
                 await asyncio.to_thread(self._append_to_log, line)
             except OSError:
-                logger.exception("log write failed in %s, key %r not stored", self.data_dir, key)
-                return False
+                logger.critical("log write failed in %s, exiting", self.data_dir, exc_info=True)
+                os._exit(1)
             self._store(key, version)
             self._line_count += 1
             if self._line_count >= self.snapshot_every:
                 await asyncio.to_thread(self._snapshot)
         return True
+
+    def counts(self) -> tuple[int, int]:
+        """Return (live keys, tombstones). A key counts as a tombstone if all its versions are."""
+        self._require_loaded()
+        tombstones = sum(1 for versions in self._data.values() if all(v.tombstone for v in versions))
+        return len(self._data) - tombstones, tombstones
 
     async def close(self) -> None:
         """Clean shutdown: wait for a running write or snapshot, then close the log file."""
@@ -137,9 +144,9 @@ class Storage:
 
     # --------------------------------------------------------------- startup
 
-    def _require_recovered(self) -> None:
+    def _require_loaded(self) -> None:
         if self._log_file is None:
-            raise RuntimeError("storage is not open: call recover() first")
+            raise RuntimeError("storage is not open: call load() first")
 
     def _load_snapshot(self) -> dict[str, list[Version]]:
         """Read snapshot.json. No snapshot yet means an empty dict."""
@@ -178,15 +185,9 @@ class Storage:
 
     def _append_to_log(self, line: bytes) -> None:
         """Append one line to the log and force it onto the disk. Runs in a thread."""
-        start = self._log_file.tell()
-        try:
-            self._log_file.write(line)
-            self._log_file.flush()
-            os.fsync(self._log_file.fileno())
-        except OSError:
-            # Do not leave a half-written line that the next write would glue onto.
-            os.truncate(self.wal_path, start)
-            raise
+        self._log_file.write(line)
+        self._log_file.flush()
+        os.fsync(self._log_file.fileno())
 
     def _store(self, key: str, version: Version) -> None:
         """Phase 1 rule: the newest write replaces what was there (D3 swaps in reconcile)."""
