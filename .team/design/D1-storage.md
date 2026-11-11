@@ -2,10 +2,6 @@
 
 Owner: Prateek · Reviewer: Meet · Status: DESIGNED · Date: 2026-11-11
 
-> Function names follow Meet's D0-M draft (`recover`, `get`, `apply`, `close`), because
-> `.team/INTERFACES.md` does not exist yet. The first version of this design called them
-> `load`, `read`, `save`, `close`; the behaviour is unchanged.
-
 ## 1. Requirement
 
 Phase 1: one node, no copies. Data must survive a crash.
@@ -36,6 +32,7 @@ Demo: put a key, kill the node (`kill -9`), restart it, the key is still there.
 | Clear the log first, then write the snapshot | A crash in between loses everything since the previous snapshot. |
 | Write the snapshot directly into `snapshot.json` | A crash halfway leaves a half-written snapshot and destroys the old good one. Temp file + rename is atomic. |
 | A separate buffer for requests that arrive during a snapshot | The lock's waiting queue already does this for free, in arrival order. |
+| Retry a failed log write or `fsync` 3 times before giving up | A failed write can leave half a line, so a retry creates a broken line in the middle of the log. After a failed `fsync` Linux can drop the data and let the next `fsync` succeed, so we would ack a lost write. Restart is cheap (snapshot + at most 1000 lines). |
 | Per-key locks, or batching several writes into one `fsync` (group commit) | Faster, but more code and harder to explain. One lock is enough for the demo load. |
 | Checksum on every log line | Detects silent disk corruption, but for crash recovery the newline + JSON check is enough. |
 | Chandy-Lamport style global snapshot across the 5 nodes | That captures one consistent state of the whole system. Our snapshot is only a local recovery checkpoint. Differences between nodes are expected and fixed later by hinted handoff, read repair and vector clocks. |
@@ -43,8 +40,9 @@ Demo: put a key, kill the node (`kill -9`), restart it, the key is still there.
 
 ## 4. Interfaces and data structures
 
-Function names must match `.team/INTERFACES.md` once D0 freezes it. Until then they follow
-Meet's D0-M draft.
+Function names follow the D0 proposal and Meet's D0-M doc (`replica.py` calls `storage.get` and
+`storage.apply`); they are frozen in `.team/INTERFACES.md`. `put_hint` is added later with hinted
+handoff (D9).
 
 ```python
 # What is stored per key
@@ -55,9 +53,10 @@ Version:
 
 class Storage:
     def __init__(self, data_dir: str, snapshot_every: int = 1000): ...
-    def recover(self) -> None                           # startup: snapshot + log replay (section 5.4)
+    def load(self) -> None                              # startup: snapshot + log replay (section 5.4)
     def get(self, key: str) -> list[Version]            # from the dict only; [] if key unknown
     async def apply(self, key: str, version: Version) -> bool  # write flow (5.1); returns after data is on disk
+    def counts(self) -> tuple[int, int]                 # (live keys, tombstones) for ClusterInfo
     async def close(self) -> None                       # clean shutdown: wait for the lock, close the log file
 ```
 
@@ -82,7 +81,9 @@ class Storage:
 6. Add 1 to the line counter. If it reached 1000, run the snapshot (5.3) while still holding the lock.
 7. Release the lock and return True. The server replies OK to the client.
 
-If step 3 or 4 fails, the dict is not touched and `apply` returns False / raises; the client gets an error.
+If step 3 or 4 fails (log write or `fsync` error), the node logs CRITICAL and exits at once with
+`os._exit(1)`. No retry: a failed write may have left half a line, and a retried `fsync` can report
+success for data that was lost. The client gets a connection error; the other replicas keep serving.
 
 ### 5.2 Get
 1. Server calls `get(key)`.
@@ -94,7 +95,7 @@ If step 3 or 4 fails, the dict is not touched and `apply` returns False / raises
 2. Rename it to `snapshot.json` (atomic: either the old snapshot or the new one, never half).
 3. Clear `wal.log` and `fsync`. Reset the line counter to 0.
 
-### 5.4 Restart (`recover`)
+### 5.4 Restart (`load`)
 1. If `snapshot.json` exists, load it into the dict. If not (first start, or fewer than 1000
    writes so far), start with an empty dict.
 2. Replay `wal.log` from the first line to the last, applying each line to the dict.
@@ -109,6 +110,7 @@ If step 3 or 4 fails, the dict is not touched and `apply` returns False / raises
 | Crash in the middle of writing a log line | The line has no `\n` or is not valid JSON. On restart it is skipped and the file is cut back. Safe, because the client never got OK for it. | `test_torn_last_line` |
 | Broken line left in the file, then a new write | Cannot happen: the file is cut back during restart, so the next line never glues onto a half-line. | `test_append_after_torn_line` |
 | Broken line in the middle of the log | Not a crash but disk corruption. Stop with a clear error instead of guessing. | `test_corrupt_middle_line` |
+| Log write or `fsync` returns an error | Log CRITICAL, exit the process immediately, no retry. Dict untouched, client got no OK. | `test_fsync_failure_exits` |
 | Crash after the log `fsync` but before the dict update | The write is in the log, so replay restores it. The client got no OK and may retry; the retry just writes the same value again. | `test_kill_after_fsync` |
 | Crash while writing the temp snapshot | Old `snapshot.json` and full log are untouched. Leftover `.tmp` is deleted on restart. | `test_crash_during_snapshot_tmp` |
 | Crash after the rename but before the log is cleared | New snapshot + old log both exist. Replaying the whole log in order over the snapshot ends in the same final state (put a=1, delete a, put a=3 → a=3). | `test_crash_between_rename_and_clear` |
@@ -121,13 +123,16 @@ If step 3 or 4 fails, the dict is not touched and `apply` returns False / raises
 | Restart with 600 lines in the log | Counter continues from 600, so the next snapshot comes after 400 more writes, not 1000. | `test_counter_after_restart` |
 | Replaying the same line twice | Harmless: applying a line again gives the same result (newest line for a key wins). | `test_replay_twice` |
 | Delete of a key that does not exist | A tombstone is stored anyway (needed in Phase 2 so a stale copy cannot bring the key back). | `test_delete_unknown_key` |
+| `ClusterInfo` asks for key counts | `counts()` walks the dict: a key whose versions are all tombstones counts as a tombstone, any other key as live. | `test_counts` |
 
 Known limitations we accept:
 - All data must fit in RAM (fine here: 10,000 keys × 1 KB ≈ 10 MB).
 - Writes go one at a time, so write speed is limited by `fsync` speed.
 - Puts pause briefly while a snapshot is written.
 - No per-line checksum, so silent corruption inside a valid-looking line is not detected.
-- Tombstones are never purged in Phase 1 (the 24 h purge from the spec is left for later).
+- Tombstones are never purged (agreed 2026-11-11: no 24 h purge and no `last_alive` guard; in a
+  course demo no tombstone lives that long). Real systems purge after a grace period and refuse to
+  start a node that was down longer than it, as Cassandra does.
 
 ## 7. Tests
 
@@ -167,6 +172,12 @@ Known limitations we accept:
    raise it; we rejected it to keep the design simple.
 
 ## 9. As built
+
+**Pending — the design changed on 2026-11-11 after the first build (DEC-04, DEC-06); the code does
+not have these yet:**
+1. `recover()` is renamed to `load()`.
+2. A failed log write or `fsync` exits the node (`os._exit(1)`) instead of returning False.
+3. `counts()` is added.
 
 Built 2026-11-11 in `dynamo/storage.py`, tests in `tests/test_storage.py` (22) and
 `tests/test_storage_crash.py` (5). 26 pass, the timing test runs only on request.

@@ -41,7 +41,7 @@ reads the code at REVIEW. In an interview either of you must be able to explain 
 
 One GitHub repo, `main` branch. **Code** (`proto/`, `dynamo/`, `client/`, `tools/`, `tests/`,
 `results/`, `Dockerfile`, `docker-compose.yml`, `cluster.yaml`, `Makefile`, `requirements.txt`,
-`README.md`) and, for now, the **notes** in `.team/` (this file, PROGRESS, DECISIONS, SPEC,
+`pyproject.toml`, `README.md`) and, for now, the **notes** in `.team/` (this file, PROGRESS, DECISIONS, SPEC,
 INTERFACES, HISTORY, design docs, hooks) plus `CLAUDE.md` and `.claude/settings.json`, so each
 person's Claude Code sees the same board after `git pull`. Code and notes are never mixed in one
 commit. The notes are removed from the repo before submission.
@@ -50,8 +50,8 @@ commit. The notes are removed from the repo before submission.
 
 | Owner | Files |
 |---|---|
-| Shared — change only after both agree, log in `.team/DECISIONS.md` | `proto/dynamo.proto`, `dynamo/config.py`, `cluster.yaml`, `.team/INTERFACES.md`, `.team/SPEC.md`, `Makefile`, `requirements.txt` |
-| Prateek | `dynamo/storage.py`, `dynamo/vclock.py`, `dynamo/membership.py`, `dynamo/gossip.py`, `dynamo/handoff.py`, `tools/chaos.py`, `tests/cluster/`, `README.md`, `.team/DEMO.md` |
+| Shared — change only after both agree, log in `.team/DECISIONS.md` | `proto/dynamo/dynamo.proto`, `dynamo/config.py`, `cluster.yaml`, `.team/INTERFACES.md`, `.team/SPEC.md`, `Makefile`, `requirements.txt`, `pyproject.toml` |
+| Prateek | `dynamo/storage.py`, `dynamo/vclock.py`, `dynamo/version.py`, `dynamo/membership.py`, `dynamo/gossip.py`, `dynamo/handoff.py`, `tools/chaos.py`, `tests/cluster/`, `README.md`, `.team/DEMO.md` |
 | Meet | `dynamo/server.py`, `dynamo/replica.py`, `dynamo/peers.py`, `dynamo/ring.py`, `dynamo/coordinator.py`, `client/cli.py`, `docker-compose.yml`, `Dockerfile`, `tools/bench.py` |
 | Everyone | own test files `tests/test_<module>.py`, own design docs, own rows in `.team/PROGRESS.md` |
 
@@ -73,10 +73,12 @@ Starting interface proposal (each half refines its own part):
 ```python
 # storage.py (P)
 class Storage:
-    def __init__(self, data_dir: str, max_vclock: int): ...
+    # final signatures: .team/INTERFACES.md (DEC-06)
+    def __init__(self, data_dir: str, snapshot_every: int = 1000): ...
     def load(self) -> None                                   # snapshot + WAL replay
-    def get(self, key: str) -> list[Version]                 # live siblings, may include tombstones
-    async def apply(self, key: str, version: Version) -> bool  # reconcile, WAL+fsync, True if stored
+    def get(self, key: str) -> list[Version]                 # all versions, tombstones included
+    async def apply(self, key: str, version: Version) -> bool  # WAL+fsync+dict; exits the node on a log error
+    def counts(self) -> tuple[int, int]                      # (live keys, tombstones) for ClusterInfo
     async def put_hint(self, owner: str, key: str, version: Version) -> None
     def hints(self) -> dict[str, list[tuple[str, Version]]]
     async def drop_hint(self, owner: str, key: str, version: Version) -> None
@@ -100,7 +102,8 @@ class Membership:
     def is_alive(self, node_id) -> bool; def alive_nodes(self) -> list[str]
     def address(self, node_id) -> str; def snapshot(self) -> list[Member]
     def on_gossip(self, msg: GossipMessage) -> GossipMessage
-    def on_contact(self, sender: str) -> None                  # any RPC from sender
+    def state(self, node_id) -> MemberState; def members(self) -> list[Member]   # DEC-03
+    # on_contact(sender) dropped (DEC-03): liveness comes only from gossip
     def subscribe(self, cb: Callable[[str, MemberState], None]) -> None
 
 # peers.py (M)
@@ -126,7 +129,7 @@ class Handoff:
 - Stubs (signatures, type hints, one-line docstring, `raise NotImplementedError`) for `storage.py`,
   `vclock.py`, `membership.py`, `gossip.py`, `handoff.py` — final signatures in `INTERFACES.md`.
 - Proto sections: `VectorClock`, `Version`, `Member`, `MemberState`, `GossipMessage`, and the
-  `Gossip` / `DeliverHint` RPCs.
+  `Gossip` RPC (no `DeliverHint`: DEC-04).
 - `config.py` dataclass + `cluster.yaml` (all settings from the SPEC table).
 - In-process cluster pytest fixture (`tests/conftest.py`): k nodes on localhost ports, one event
   loop, with kill / restart of a node.
@@ -193,7 +196,7 @@ persisted too. A write is only acked once it is on disk.
 3. **Idempotent replay:** is applying the same line twice always safe? Prove it with the reconcile rule.
 4. **fsync vs event loop:** per D0 decision — and if writes go to a thread, how do you keep two writes to the same key in order?
 5. Values are bytes → base64 in JSON. Any size limit?
-6. Tombstones: stored like any version; when and where are they purged (24 h)? Does purge need a WAL entry?
+6. Tombstones: stored like any version; never purged (DEC-06).
 7. Hints: same WAL with `hint_for` set, or a separate `hints.log`? Which is easier to replay and to delete from?
 8. Until D3 lands, `apply` needs *some* rule — use "last write replaces" behind the same signature, then swap in `vclock.reconcile`.
 
@@ -301,7 +304,7 @@ Expose the `Membership` interface from D0, including `subscribe` (handoff needs 
 4. Peer choice: random ALIVE peer; occasionally gossip to a DEAD one so recovery is noticed — how often?
 5. **Boot:** all nodes start at once and know nobody's heartbeat — start everyone as ALIVE, or as SUSPECT until first contact?
 6. A failed Gossip RPC: mark the peer immediately, or only let heartbeat age decide (avoids false positives)?
-7. `on_contact(sender)` from any RPC: does it count as a heartbeat?
+7. `on_contact(sender)` is dropped (DEC-03): only gossip updates liveness.
 
 **Done when:** in-process tests for merge rule and refutation; kill a node → all others show SUSPECT
 by ~3 s and DEAD by ~10 s; restart → ALIVE again; `kv info` shows states.

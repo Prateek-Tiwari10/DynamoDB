@@ -70,13 +70,14 @@ Each node is one Python process exposing two gRPC services on one port: `KVStore
 
 ```
 dynamo/
-  proto/dynamo.proto      # all messages and services
+  proto/dynamo/dynamo.proto   # all messages and services
   dynamo/
     server.py             # starts gRPC server, wires modules
     coordinator.py        # handles client requests, quorum logic
     replica.py            # NodeService handlers (local reads/writes)
     ring.py               # consistent hashing, preference list
     vclock.py             # vector clocks
+    version.py            # compare and merge rules for versions
     storage.py            # dict + write-ahead log
     membership.py         # node table, states
     gossip.py             # gossip loop, failure detector
@@ -100,12 +101,17 @@ dynamo/
 | `W` | 2 | Acks needed for a write |
 | `vnodes` | 32 | Ring positions per physical node |
 | `rpc_timeout_ms` | 500 | Wait per replica call |
+| `request_timeout_ms` | 1500 | Total time a node spends on one client request |
 | `gossip_interval_ms` | 1000 | Gossip period |
 | `suspect_after_ms` | 3000 | No heartbeat → SUSPECT |
 | `dead_after_ms` | 10000 | No heartbeat → DEAD |
 | `handoff_retry_ms` | 5000 | Hint delivery retry period |
 | `vclock_max_entries` | 10 | Prune limit |
 | `data_dir` | `/data/<node_id>` | WAL and snapshot location |
+
+Per-node settings: every flag defaults from its env var (`--node-id` / `NODE_ID`, `--config` / `CONFIG`,
+`--port` / `PORT`, `--data-dir` / `DATA_DIR`). `CONFIG` defaults to `cluster.local.yaml`. Startup fails only
+if the node id is missing from both, or is not in the config.
 
 Hashing: `position = int(md5(key).hexdigest(), 16) % 2**32`; vnode positions use `md5(f"{node_id}#{i}")`.
 
@@ -119,7 +125,9 @@ service KVStore {
   rpc Put(PutRequest) returns (PutResponse);
   rpc Get(GetRequest) returns (GetResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
-  rpc ClusterInfo(Empty) returns (ClusterInfoResponse);
+  rpc ClusterInfo(Empty) returns (ClusterInfoResponse);   // local only
+  rpc Locate(LocateRequest) returns (LocateResponse);      // local only
+  rpc LocalGet(LocalGetRequest) returns (LocalGetResponse); // local only
 }
 
 message PutRequest {
@@ -141,7 +149,7 @@ message GetRequest {
 message GetResponse {
   Status status = 1;
   repeated bytes values = 2;  // >1 means siblings
-  bytes context = 3;          // merged clock of all siblings
+  bytes context = 3;          // merged clock of all siblings, tombstones included; set on NOT_FOUND too
   repeated string read_from = 4;
 }
 
@@ -149,15 +157,25 @@ message DeleteRequest { string key = 1; bytes context = 2; uint32 w = 3; }
 message DeleteResponse { Status status = 1; }
 
 message ClusterInfoResponse {
-  repeated Member members = 1;
+  repeated Member members = 1;   // address, state, incarnation, heartbeat
   uint32 n = 2; uint32 r = 3; uint32 w = 4;
+  string node_id = 5;
+  uint32 vnodes = 6;
+  string ring_fingerprint = 7;
+  uint64 live_keys = 8;
+  uint64 tombstones = 9;
 }
+message LocateRequest    { string key = 1; }
+message LocateResponse   { repeated string nodes = 1; uint32 position = 2; }
+message LocalGetRequest  { string key = 1; }
+message LocalGetResponse { Status status = 1; repeated Version versions = 2; string node_id = 3; }
 
 enum Status {
-  OK = 0;
-  NOT_FOUND = 1;
-  QUORUM_FAILED = 2;   // fewer than R/W replies before timeout
-  INVALID = 3;         // e.g. W > N
+  STATUS_UNSPECIFIED = 0;   // never a real answer
+  OK = 1;
+  NOT_FOUND = 2;
+  QUORUM_FAILED = 3;   // fewer than R/W replies before timeout
+  INVALID = 4;         // e.g. W > N
 }
 ```
 
@@ -166,6 +184,7 @@ Rules
 - A `Put` without `context` on an existing key creates a sibling, not an overwrite.
 - To resolve siblings, the client merges the values and calls `Put` with the context from `Get`.
 - `Delete` writes a tombstone; it is not an instant removal.
+- `Get` returns a context even when the answer is `NOT_FOUND`, so a put after a delete replaces the tombstone.
 
 CLI
 
@@ -180,7 +199,7 @@ The CLI stores the last context per key in a local file so `put` after `get` sen
 
 ## Node-to-node messages
 
-Clients never call `NodeService`. Every call carries the sender's ID so receivers can update membership as a side effect.
+Clients never call `NodeService`. Liveness comes only from gossip: no other RPC updates membership.
 
 ```protobuf
 service NodeService {
@@ -188,7 +207,6 @@ service NodeService {
   rpc ReplicaPut(ReplicaPutRequest) returns (ReplicaPutResponse);  // phase 2
   rpc ReplicaGet(ReplicaGetRequest) returns (ReplicaGetResponse);  // phase 2
   rpc Gossip(GossipMessage) returns (GossipMessage);               // phase 3
-  rpc DeliverHint(ReplicaPutRequest) returns (ReplicaPutResponse); // phase 4
 }
 
 message VectorClock {
@@ -229,7 +247,8 @@ message Member {
   string address = 2;          // host:port
   uint64 heartbeat = 3;        // incremented by the owner every gossip tick
   MemberState state = 4;
-  uint64 incarnation = 5;      // bumped when a node restarts or refutes SUSPECT
+  uint64 incarnation = 5;      // the node's boot time in ms
+  string ring_fingerprint = 6; // so every node can notice a ring mismatch
 }
 enum MemberState { ALIVE = 0; SUSPECT = 1; DEAD = 2; }
 
@@ -238,6 +257,7 @@ message GossipMessage { string sender = 1; repeated Member members = 2; }
 
 Gossip merge rule: for each member keep the entry with the higher `incarnation`; if equal, the higher
 `heartbeat`. A node seeing itself marked SUSPECT bumps its own `incarnation` to refute it.
+All peers start as ALIVE and the timer starts at boot.
 
 | RPC | Phase | Sent by | Sent to |
 |---|---|---|---|
@@ -245,7 +265,7 @@ Gossip merge rule: for each member keep the entry with the higher `incarnation`;
 | `ReplicaPut` | 2 | Coordinator | Each of the N replicas |
 | `ReplicaGet` | 2 | Coordinator | Each of the N replicas |
 | `Gossip` | 3 | Every node, every 1 s | One random ALIVE peer |
-| `DeliverHint` | 4 | Node holding a hint | The real owner, once it is ALIVE |
+| `ReplicaPut` (empty `hint_for`) | 4 | Node holding a hint | The real owner, once it is ALIVE |
 
 ## Data model
 
@@ -263,17 +283,20 @@ Storing a new version on a replica
 1. For each existing version: if it is `BEFORE` the new one, drop it.
 2. If any existing version is `AFTER` or `EQUAL` to the new one, ignore the new one (stale).
 3. Otherwise append the new one; the key now has siblings.
+4. Siblings with the same value and tombstone flag collapse into one, with their clocks merged.
 
-Coordinator write: clock = `increment(merge(context clocks), coordinator_id)`.
+Coordinator write: the new clock is the merged context clocks with the coordinator's own counter set to
+`max(context[self], highest own counter among its local versions of the key) + 1`, under a per-key lock.
 
 Tombstones: `Delete` stores a `Version` with `tombstone = true` and empty value. `Get` returns
-`NOT_FOUND` if the only surviving versions are tombstones. Purged after 24 h.
+`NOT_FOUND` if the only surviving versions are tombstones. Tombstones are never purged (known limitation).
 
 On-disk format
 - WAL `/data/<node_id>/wal.log`: one JSON line per write, `fsync` before acking.
 - Line: `{"op":"put","key":"cart:42","version":{"value":"<base64>","clock":{"node1":3},"tombstone":false},"hint_for":""}`
 - Snapshot `/data/<node_id>/snapshot.json` every 1,000 log lines; the log is then truncated.
 - Startup: load snapshot, replay the log, then join gossip.
+- A failed log write or `fsync`: log CRITICAL and exit the process (`os._exit(1)`), no retry.
 
 ## Request flows
 
@@ -282,7 +305,7 @@ A request always ends at a coordinator: the first ALIVE node in the key's prefer
 Put(key, value, context)
 1. Client sends `Put` to any node X.
 2. X computes `preference_list(key, N)`. If X is not in it, X sends `Forward` to the first ALIVE node in the list and relays the response.
-3. Coordinator C builds the new clock: `increment(merge(context), C)`.
+3. Coordinator C builds the new clock (rule under "Coordinator write" above).
 4. C writes locally (WAL + dict); that counts as 1 ack.
 5. C sends `ReplicaPut` to the other N−1 replicas in parallel with `rpc_timeout_ms`.
 6. As soon as W acks arrive, C returns `OK` with the new context. Remaining replies are handled in the background.
@@ -292,19 +315,19 @@ Get(key)
 1. Routing as in Put steps 1–2.
 2. C reads locally and sends `ReplicaGet` to the other N−1 replicas in parallel.
 3. When R responses arrive, merge: drop any version `BEFORE` another; the rest are siblings.
-4. Return values + merged context. All tombstones → `NOT_FOUND`.
+4. Return values + merged context. All tombstones → `NOT_FOUND`, still with the context.
 5. Read repair (phase 3): push winning version(s) to replicas that were missing/older, in the background.
 
 When a replica is DEAD (phase 4)
 1. C walks the ring past the N preferred nodes and picks the next ALIVE node H.
 2. C sends `ReplicaPut` to H with `hint_for = <dead node>`.
 3. H stores it in `hints` (and WAL); counts as an ack.
-4. Every `handoff_retry_ms`, H checks membership; when the owner is ALIVE, H calls `DeliverHint` and deletes the hint on success.
+4. Every `handoff_retry_ms`, H checks membership; when the owner is ALIVE, H calls `ReplicaPut` with an empty `hint_for` and deletes the hint on success.
 
 Edge cases
 - `W > number of ALIVE nodes` → `QUORUM_FAILED` fast, without waiting for the timeout.
 - Coordinator crash mid-write: client gets an error/timeout and may retry; vector clocks make retries safe.
-- Node restart: replay WAL, bump `incarnation`, rejoin gossip; hints flow back to it.
+- Node restart: replay WAL, new `incarnation` (boot time in ms), rejoin gossip; hints flow back to it.
 
 ## Testing and benchmarks
 

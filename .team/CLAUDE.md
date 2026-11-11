@@ -20,7 +20,7 @@ them; they are removed before the project is submitted (see section 7).
 
 | Kind | Paths | Commit prefix |
 |---|---|---|
-| **Code** | `proto/`, `dynamo/`, `client/`, `tools/`, `tests/`, `results/`, `Dockerfile`, `docker-compose.yml`, `cluster.yaml`, `Makefile`, `requirements.txt`, `README.md`, `.gitignore` | `storage: …`, `ring: …` |
+| **Code** | `proto/`, `dynamo/`, `client/`, `tools/`, `tests/`, `results/`, `Dockerfile`, `docker-compose.yml`, `cluster.yaml`, `Makefile`, `requirements.txt`, `pyproject.toml`, `README.md`, `.gitignore` | `storage: …`, `ring: …` |
 | **Notes** | `.team/` (PROGRESS, TASKS, DECISIONS, SPEC, INTERFACES, HISTORY, design docs, hooks, archive), root `CLAUDE.md`, `.claude/settings.json` | `progress: …`, `Dx: design`, `notes: …` |
 
 - **Never** `git add -A`, `git add .` or `git commit -a`. Always add explicit paths.

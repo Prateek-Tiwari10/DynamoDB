@@ -7,9 +7,9 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
-| D0-P | Contracts: data, membership, test harness | Prateek | DESIGNING | .team/design/D0-P-contracts.md | 2026-10-23 | restarted clean, old Phase 1 work in .team/archive/pre-d0/ |
+| D0-P | Contracts: data, membership, test harness | Prateek | DESIGNING | .team/design/D0-P-contracts.md | 2026-11-11 | no design doc yet; the 17 D0-M answers (DEC-02 to DEC-07) already fix most of it; storage block of INTERFACES.md is final |
 | D0-M | Contracts: request path, server wiring, build | Meet | DESIGNING | .team/design/D0-M-contracts.md | 2026-10-23 | split confirmed by Meet |
-| D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-11 | Meet to review; names follow D0-M draft: recover / get / apply / close; 287 writes/s |
+| D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-11 | design updated (DEC-04, DEC-06): rename to `load`, exit on log error, `counts()` |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
 | D4 | Ring + static cluster + Docker | Meet | TODO | — | 2026-10-23 | |
@@ -24,14 +24,18 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D1 in REVIEW; D0-P design still open
+- **Prateek:** D1 code changes after the 17 answers; D0-P design still open
 - **Meet:** D0-M design
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
-- **Prateek → Meet (2026-11-11):** D1 is in REVIEW (`dynamo/storage.py`, design + "As built" in `.team/design/D1-storage.md`). It was built before D0 is frozen, using your names `recover / get / apply / close`. Open from your list: item 13 (today a failed log write returns False, the node keeps running), item 14 (no tombstone purge yet), `put_hint` (not built, comes with D9), `Version` lives in `dynamo/storage.py` for now (not `version.py`). There is no `Makefile` yet: tests run with `python -m pytest tests` from the repo root.
+- **Prateek → Meet (2026-11-11):** Prateek answered all 17 D0-M items, see DEC-02 to DEC-07. Item 8: reuse ReplicaPut. Item 14: changed to no purge. The entries say "agreed by Prateek; Meet to confirm"; `SPEC.md`, `TASKS.md`, `CLAUDE.md` and the new `INTERFACES.md` are updated to match. Your D0-M doc is not edited.
+- **Prateek → Meet (2026-11-11): two answers differ from your D0-M doc, please look at these first.**
+  1. **Item 8 (DEC-04):** no `DeliverHint` RPC. Hint delivery uses `ReplicaPut` with an empty `hint_for`. Remove `DeliverHint` from your `NodeServiceServicer` and proto half.
+  2. **Item 14 (DEC-06):** no tombstone purge and no `last_alive` guard. Tombstones are kept forever (known limitation). Your Q8 and the `last_alive` edge-case row no longer apply.
+- **Prateek → Meet (2026-11-11):** storage names are final in `.team/INTERFACES.md`: `load / get / apply / counts / close`. `Node.start()` calls `storage.load()`. `Version` lives in `dynamo/storage.py` for now. There is no `Makefile` yet: tests run with `python -m pytest tests` from the repo root.
 
 - **Meet → Prateek (2026-11-10):** D0-M draft is in `.team/design/D0-M-contracts.md`. Please review the "Needs Prateek" list at the top (17 items, updated 2026-11-10: vector clocks + `version.py` owner, coordinator counter rule, NOT_FOUND returns context, gossip states/incarnation, ring fingerprint in gossip entry, `Membership.state()`/`members()`, drop `on_contact`, DeliverHint own RPC?, proto path, `STATUS_UNSPECIFIED = 0`, `request_timeout_ms`, env-var settings rule, WAL-failure exit, tombstone purge + `last_alive` guard, `Locate`/`LocalGet`, `pyproject.toml` in allowed paths, logging filter vs your logging helper). Agree or comment so we can add DEC entries.
 
@@ -47,3 +51,5 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-11 19:10  Prateek  D1  TODO → DESIGNED  (design saved; storage names follow D0-M draft)
 - 2026-11-11 19:10  Prateek  D1  DESIGNED → IMPLEMENTING  (started before D0 is frozen, Prateek's call)
 - 2026-11-11 20:10  Prateek  D1  IMPLEMENTING → REVIEW  (26 tests pass; 10,000 puts in 34.90 s = 287 writes/s)
+- 2026-11-11 21:00  Prateek  D0-M  answered all 17 "Needs Prateek" items (DEC-02 to DEC-07, Meet to confirm); INTERFACES.md created
+- 2026-11-11 21:00  Prateek  D1  REVIEW → IMPLEMENTING  (design updated: load, exit on log error, counts)
