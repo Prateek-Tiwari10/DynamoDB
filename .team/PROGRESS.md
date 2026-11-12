@@ -8,7 +8,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
 | D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-12 | design saved (DEC-08, Meet to confirm); INTERFACES.md: all Prateek blocks final |
-| D0-M | Contracts: request path, server wiring, build | Meet | DESIGNED | .team/design/D0-M-contracts.md | 2026-11-12 | design frozen (DEC-09, Prateek to confirm); DEC-02 to DEC-08 confirmed |
+| D0-M | Contracts: request path, server wiring, build | Meet | IMPLEMENTING | .team/design/D0-M-contracts.md | 2026-11-12 | design frozen (DEC-09, Prateek to confirm); DEC-02 to DEC-08 confirmed |
 | D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-12 | two follow-ups from D0-P: `Storage(data_dir, config)`, snapshot error keeps the node running |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D0-P implementation, plus two small D1 follow-ups
-- **Meet:** D0-M designed; implementation next
+- **Meet:** D0-M implementation
 
 ## Blockers / questions for the partner
 
@@ -51,3 +51,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-12 11:00  Prateek  D0-P  DESIGNING → DESIGNED → IMPLEMENTING  (design saved, DEC-08)
 - 2026-11-12 11:00  Prateek  D1  REVIEW → IMPLEMENTING  (constructor takes config; snapshot error keeps running)
 - 2026-11-12 12:00  Meet  D0-M  DESIGNING → DESIGNED  (DEC-02 to DEC-08 confirmed; DeliverHint and tombstone purge removed; DEC-09)
+- 2026-11-12 12:20  Meet  D0-M  DESIGNED → IMPLEMENTING
