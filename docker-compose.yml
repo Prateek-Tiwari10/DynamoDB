@@ -1,0 +1,40 @@
+# Five nodes from one image. Inside the network every node listens on 50051;
+# on the host they are 50051-50055. Each node writes only /data/<node_id>/.
+x-node: &node
+  build: .
+  image: dynamo-kv
+  volumes:
+    - ./data:/data
+  stop_grace_period: 10s
+
+services:
+  node1:
+    <<: *node
+    environment:
+      NODE_ID: node1
+    ports:
+      - "50051:50051"
+  node2:
+    <<: *node
+    environment:
+      NODE_ID: node2
+    ports:
+      - "50052:50051"
+  node3:
+    <<: *node
+    environment:
+      NODE_ID: node3
+    ports:
+      - "50053:50051"
+  node4:
+    <<: *node
+    environment:
+      NODE_ID: node4
+    ports:
+      - "50054:50051"
+  node5:
+    <<: *node
+    environment:
+      NODE_ID: node5
+    ports:
+      - "50055:50051"
