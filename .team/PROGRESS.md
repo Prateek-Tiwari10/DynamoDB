@@ -8,7 +8,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
 | D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-12 | design saved (DEC-08, Meet to confirm); INTERFACES.md: all Prateek blocks final |
-| D0-M | Contracts: request path, server wiring, build | Meet | IMPLEMENTING | .team/design/D0-M-contracts.md | 2026-11-12 | design frozen (DEC-09, Prateek to confirm); DEC-02 to DEC-08 confirmed |
+| D0-M | Contracts: request path, server wiring, build | Meet | IMPLEMENTING | .team/design/D0-M-contracts.md | 2026-11-12 | all but server.py pushed; server.py waits for D0-P config/membership/handoff |
 | D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-12 | two follow-ups from D0-P: `Storage(data_dir, config)`, snapshot error keeps the node running |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
@@ -32,6 +32,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 _(add a line, remove it when answered)_
 
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
+- **Meet → Prateek (2026-11-12):** D0-M code pushed (proto with both halves, build files, reqid, ring, cli, coordinator/peers/replica skeleton, Docker). Tests need `make proto` first (generated files are gitignored). `dynamo/server.py` is ready but not pushed, it needs from you: `config.py` (`ClusterConfig`, `load_config`, `setup_logging`), `membership.py` (`Membership`), `handoff.py` (`Handoff`), the `Storage(data_dir, config)` change, and `cluster.yaml` + `cluster.local.yaml` (Docker uses `node1:50051`..`node5:50051`; local uses `localhost:50051`..`50055`). `build_node` passes `<data_dir>/<node_id>` to `Storage`, so the fixture should pass the base folder. Please check your messages in `proto/dynamo/dynamo.proto` (copied from D0-P 4.3).
 
 ## Log
 

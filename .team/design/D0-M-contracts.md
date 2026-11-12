@@ -463,4 +463,16 @@ message LocalGetResponse { Status status = 1; repeated Version versions = 2; str
 6. Q: Why must NOT_FOUND still return a context?  A: A deleted key is a tombstone with a clock. If the client doesn't get that clock, its next put is concurrent with the tombstone instead of replacing it.
 
 ## 9. As built
-<filled after implementation: what changed from this design and why>
+_In progress (2026-11-12). Pushed: proto, build files, `reqid.py`, `ring.py`, `cli.py`, coordinator / peers / replica skeleton, Docker files, with tests (47 new tests pass). `server.py` is written but not pushed: it imports `config.py`, `membership.py` and `handoff.py` from D0-P._
+
+Small changes from the design:
+- `request_budget` lives in `coordinator.py`, not `server.py`: `replica.py` (Forward) needs it too, and `server.py` imports `replica.py`, so keeping it in `server.py` would be an import cycle. Its tests are in `test_coordinator.py`.
+- `Node` has a `node_id` field: `ReplicaPut`, `ReplicaGet`, `LocalGet` and `ClusterInfo` reply with it.
+- `version_to_proto` / `version_from_proto` live in `replica.py`. Until D3 they map the storage clock dict to `VectorClock.counters`; `updated_ms` is not carried yet.
+- `LocalGet`: `OK` if the node holds any version (tombstones included), `NOT_FOUND` if none, `INVALID` for a bad key.
+- CLI `delete` sends the saved context but cannot save a new one, because `DeleteResponse` has no context field. A later `get` (NOT_FOUND) saves the tombstone's context.
+- CLI options work both before and after the command (`kv --node X get k` as in the SPEC, and `kv get k --node X`).
+- The proto file contains both halves; Prateek's messages are copied as written in D0-P 4.3 / SPEC.
+- Generated `dynamo_pb2*.py` files are not committed (`.gitignore`); `make proto`, `make test` and the Dockerfile generate them.
+- The Dockerfile copies only `proto/`, `dynamo/`, `client/`, `pyproject.toml` and `cluster.yaml`, so no `.dockerignore` is needed.
+- `RequestIdFilter(node_id)` is added to the root log handlers in `serve()`. In the in-process test cluster all nodes share one process, so log lines there carry one node id (tests only).
