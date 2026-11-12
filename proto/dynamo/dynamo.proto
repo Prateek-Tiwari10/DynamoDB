@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+package dynamo;
+
+// ---------- Client API ----------
+
+service KVStore {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc ClusterInfo(Empty) returns (ClusterInfoResponse);      // local only
+  rpc Locate(LocateRequest) returns (LocateResponse);         // local only
+  rpc LocalGet(LocalGetRequest) returns (LocalGetResponse);   // local only
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;   // never a real answer
+  OK = 1;
+  NOT_FOUND = 2;
+  QUORUM_FAILED = 3;        // fewer than R/W replies before timeout
+  INVALID = 4;              // e.g. W > N
+}
+
+message Empty {}
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  bytes context = 3;        // empty on first write
+  uint32 w = 4;             // 0 = use cluster default
+}
+message PutResponse {
+  Status status = 1;
+  bytes context = 2;        // new vector clock
+  repeated string written_to = 3;
+}
+
+message GetRequest {
+  string key = 1;
+  uint32 r = 2;             // 0 = use cluster default
+}
+message GetResponse {
+  Status status = 1;
+  repeated bytes values = 2;  // more than one means siblings
+  bytes context = 3;          // merged clock of all siblings, tombstones included; set on NOT_FOUND too
+  repeated string read_from = 4;
+}
+
+message DeleteRequest {
+  string key = 1;
+  bytes context = 2;
+  uint32 w = 3;
+}
+message DeleteResponse {
+  Status status = 1;
+}
+
+message ClusterInfoResponse {
+  repeated Member members = 1;   // address, state, incarnation, heartbeat
+  uint32 n = 2;
+  uint32 r = 3;
+  uint32 w = 4;
+  string node_id = 5;
+  uint32 vnodes = 6;
+  string ring_fingerprint = 7;
+  uint64 live_keys = 8;
+  uint64 tombstones = 9;
+}
+
+message LocateRequest { string key = 1; }
+message LocateResponse {
+  repeated string nodes = 1;     // preference list
+  uint32 position = 2;           // ring position of the key
+}
+
+message LocalGetRequest { string key = 1; }
+message LocalGetResponse {
+  Status status = 1;
+  repeated Version versions = 2; // tombstones included
+  string node_id = 3;
+}
+
+// ---------- Node-to-node ----------
+
+service NodeService {
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+  rpc ReplicaPut(ReplicaPutRequest) returns (ReplicaPutResponse);
+  rpc ReplicaGet(ReplicaGetRequest) returns (ReplicaGetResponse);
+  rpc Gossip(GossipMessage) returns (GossipMessage);
+}
+
+message ForwardRequest {
+  string sender = 1;
+  oneof op {
+    PutRequest put = 2;
+    GetRequest get = 3;
+    DeleteRequest delete = 4;
+  }
+}
+message ForwardResponse {
+  oneof result {
+    PutResponse put = 1;
+    GetResponse get = 2;
+    DeleteResponse delete = 3;
+  }
+}
+
+message ReplicaPutRequest {
+  string sender = 1;
+  string key = 2;
+  Version version = 3;
+  string hint_for = 4;   // empty = I am a real owner; set = sloppy-quorum stand-in
+}
+message ReplicaPutResponse {
+  bool ok = 1;
+  string node_id = 2;
+}
+
+message ReplicaGetRequest {
+  string sender = 1;
+  string key = 2;
+}
+message ReplicaGetResponse {
+  string node_id = 1;
+  repeated Version versions = 2;   // empty = not found
+}
+
+// ---------- Data and membership (D0-P) ----------
+
+message VectorClock {
+  map<string, uint64> counters = 1;    // node_id -> counter
+  map<string, int64> updated_ms = 2;   // node_id -> last update time, used only to choose what to prune
+}
+
+message Version {
+  bytes value = 1;                     // empty for a tombstone
+  VectorClock clock = 2;
+  bool tombstone = 3;
+}
+
+enum MemberState {
+  MEMBER_STATE_UNSPECIFIED = 0;
+  ALIVE = 1;
+  SUSPECT = 2;
+  DEAD = 3;
+}
+
+message Member {
+  string node_id = 1;
+  string address = 2;                  // host:port
+  uint64 heartbeat = 3;                // raised by the owner every gossip tick
+  MemberState state = 4;               // this node's own opinion; filled for ClusterInfo
+  uint64 incarnation = 5;              // owner's boot time in ms
+  string ring_fingerprint = 6;         // so every node can notice a ring mismatch
+}
+
+message GossipMessage {
+  string sender = 1;
+  repeated Member members = 2;
+}
