@@ -8,7 +8,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
 | D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-12 | design saved (DEC-08, Meet to confirm); INTERFACES.md: all Prateek blocks final |
-| D0-M | Contracts: request path, server wiring, build | Meet | DESIGNING | .team/design/D0-M-contracts.md | 2026-10-23 | split confirmed by Meet |
+| D0-M | Contracts: request path, server wiring, build | Meet | DESIGNED | .team/design/D0-M-contracts.md | 2026-11-12 | design frozen (DEC-09, Prateek to confirm); DEC-02 to DEC-08 confirmed |
 | D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-12 | two follow-ups from D0-P: `Storage(data_dir, config)`, snapshot error keeps the node running |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
@@ -25,19 +25,13 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D0-P implementation, plus two small D1 follow-ups
-- **Meet:** D0-M design
+- **Meet:** D0-M designed; implementation next
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
-- **Prateek → Meet (2026-11-11):** Prateek answered all 17 D0-M items, see DEC-02 to DEC-07. Item 8: reuse ReplicaPut. Item 14: changed to no purge. The entries say "agreed by Prateek; Meet to confirm"; `SPEC.md`, `TASKS.md`, `CLAUDE.md` and the new `INTERFACES.md` are updated to match. Your D0-M doc is not edited.
-- **Prateek → Meet (2026-11-11): two answers differ from your D0-M doc, please look at these first.**
-  1. **Item 8 (DEC-04):** no `DeliverHint` RPC. Hint delivery uses `ReplicaPut` with an empty `hint_for`. Remove `DeliverHint` from your `NodeServiceServicer` and proto half.
-  2. **Item 14 (DEC-06):** no tombstone purge and no `last_alive` guard. Tombstones are kept forever (known limitation). Your Q8 and the `last_alive` edge-case row no longer apply.
-- **Prateek → Meet (2026-11-11):** storage names are final in `.team/INTERFACES.md`: `load / get / apply / counts / close`. `Node.start()` calls `storage.load()`. `Version` lives in `dynamo/storage.py` for now. There is no `Makefile` yet: tests run with `python -m pytest tests` from the repo root.
-
-- **Meet → Prateek (2026-11-10):** D0-M draft is in `.team/design/D0-M-contracts.md`. Please review the "Needs Prateek" list at the top (17 items, updated 2026-11-10: vector clocks + `version.py` owner, coordinator counter rule, NOT_FOUND returns context, gossip states/incarnation, ring fingerprint in gossip entry, `Membership.state()`/`members()`, drop `on_contact`, DeliverHint own RPC?, proto path, `STATUS_UNSPECIFIED = 0`, `request_timeout_ms`, env-var settings rule, WAL-failure exit, tombstone purge + `last_alive` guard, `Locate`/`LocalGet`, `pyproject.toml` in allowed paths, logging filter vs your logging helper). Agree or comment so we can add DEC entries.
+- **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 
 ## Log
 
@@ -56,3 +50,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-12 10:00  Prateek  D1  IMPLEMENTING → REVIEW  (load rename, exit on log error, counts; 28 tests pass)
 - 2026-11-12 11:00  Prateek  D0-P  DESIGNING → DESIGNED → IMPLEMENTING  (design saved, DEC-08)
 - 2026-11-12 11:00  Prateek  D1  REVIEW → IMPLEMENTING  (constructor takes config; snapshot error keeps running)
+- 2026-11-12 12:00  Meet  D0-M  DESIGNING → DESIGNED  (DEC-02 to DEC-08 confirmed; DeliverHint and tombstone purge removed; DEC-09)

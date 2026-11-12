@@ -1,28 +1,10 @@
 # D0-M — Request path, server wiring & build contracts
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNING (draft) · Date: 2026-11-10
+Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-12
 
-> Draft. The list under "Needs Prateek" changes the SPEC, a shared file, or a file Prateek owns;
-> each needs his agreement and a `DEC-NN` entry before this doc is DESIGNED.
-
-### Needs Prateek (agreement + DEC entry)
-1. Vector clocks as in the SPEC (Meet now follows the SPEC); `version.py` added to the file list, owned by Prateek; replicas merge incoming versions; identical siblings collapse.
-2. Coordinator counter rule (Q10): `max(context[self], highest own counter among local versions) + 1` under a per-key lock; known limitation listed in 6.1 (dotted version vectors would fix it). Touches his `vclock.py` / D3.
-3. Get returns a context even when the answer is NOT_FOUND (Q11); extends the SPEC's Get rule.
-4. Gossip states as in the SPEC (ALIVE, SUSPECT 3 s, DEAD 10 s); `incarnation` = boot time in ms; all peers start ALIVE with the timer starting at boot (his D6 / `membership.py` / `gossip.py`).
-5. Each gossip entry carries the node's `ring_fingerprint` (his half of the proto).
-6. `Membership` needs `state(node_id) -> MemberState` and `members() -> list[Member]` (used by routing and `ClusterInfo`).
-7. Drop `membership.on_contact(sender)`: a replica cannot know the sender's node ID (`context.peer()` gives an IP), and it would be a second liveness source fighting gossip. Conflicts with the SPEC line "every call carries the sender's ID so receivers can update membership" and with the D0 proposal.
-8. `DeliverHint` does exactly what `ReplicaPut` with an empty `hint_for` does: does it need its own RPC?
-9. Proto stays at `proto/dynamo/dynamo.proto`: update the SPEC layout and the TASKS ownership table.
-10. `Status` gets `STATUS_UNSPECIFIED = 0`, so an unset status never reads as success (SPEC change).
-11. `request_timeout_ms` (default 1500) added to the SPEC config table.
-12. Settings rule: every flag defaults from its env var (`NODE_ID`, `CONFIG`, `PORT`, `DATA_DIR`); `CONFIG` default `cluster.local.yaml`; startup fails only if node id is missing from both (his `config.py` / `cluster.yaml`).
-13. WAL write or fsync failure → CRITICAL + `os._exit(1)` (his storage, D1).
-14. Tombstone purge after 24 h at snapshot time + `last_alive` guard at startup (his storage, D1).
-15. New local RPCs `Locate` and `LocalGet` next to `ClusterInfo`; `ClusterInfo` reports tombstone counts and member state/incarnation/heartbeat.
-16. `pyproject.toml` added to the allowed code paths (one-line update in `CLAUDE.md` and `TASKS.md`).
-17. `reqid.py` holds the request-ID logging filter: check it does not overlap his D0-P "logging format helper".
+> The 17 items that touched the SPEC, shared files or Prateek's files were agreed with Prateek as
+> DEC-02 to DEC-07. Prateek's half (D0-P, DEC-08) is used as frozen in `.team/INTERFACES.md`.
+> Two answers changed this doc: no `DeliverHint` RPC (DEC-04) and no tombstone purge (DEC-06, Q8).
 
 ## 1. Requirement
 Freeze the request-path contracts so both halves can be built in parallel:
@@ -70,7 +52,7 @@ and never persisted. Each node finds its own entry in `cluster.yaml` from `NODE_
 - Versions follow the SPEC: vector clocks. The coordinator drops dominated versions and keeps concurrent ones as siblings. Tombstones are versions like any other.
 - A replica merges an incoming version with what it holds (drop dominated, keep concurrent) rather than doing "apply if newer".
 - Siblings with an identical value and tombstone flag collapse into one, with their clocks merged. (A Forward retry after a partial first attempt can otherwise create two siblings with the same value.)
-- `version.py` holds the comparison and merge rules and is owned by Prateek.
+- `version.py` holds the comparison and merge rules and is owned by Prateek (DEC-02). The coordinator sets its counter with `vclock.advance(clock, node_id, counter, now_ms)` (DEC-08).
 - Read repair reuses ReplicaPut, one call per sibling. There is no new RPC and no proto change. The merge keeps only versions that nothing else dominates, so arrival order and duplicates don't matter.
 - It pushes the reconciled sibling set, exactly as stored, to every replica whose reply was missing versions or "not found", including the third replica whose reply arrives after the client got its answer.
 - Repair runs in the background after the client reply. It is best-effort: failures are logged and never retried.
@@ -91,19 +73,19 @@ and never persisted. Each node finds its own entry in `cluster.yaml` from `NODE_
 - **Time budget:** each node's budget is `min(request_timeout_ms, time left on the incoming gRPC deadline)`. If the client set no deadline (`context.time_remaining()` is None), the budget is `request_timeout_ms`. A forwarded call gets only what remains, and each replica call uses `rpc_timeout_ms`. `request_timeout_ms` is added to the SPEC config table with a default of 1500.
 - One decorator wraps every handler of both servicers: it sets the request ID, turns `NotImplementedError` into `abort(UNIMPLEMENTED)` and any other `Exception` into `abort(INTERNAL)`. It catches `Exception`, never `BaseException`, so cancellations pass through. A replica with an internal error therefore never acks.
 - D0 stubs raise `NotImplementedError`, so every not-yet-built RPC answers UNIMPLEMENTED.
-- If a WAL write or fsync fails, the node logs CRITICAL and exits immediately with `os._exit(1)`, with no graceful shutdown.
+- If a log write or fsync fails, the node logs CRITICAL and exits immediately with `os._exit(1)`, with no graceful shutdown (DEC-06). An error on the snapshot files is only logged and the node keeps running (DEC-08).
 - **CLI exit codes:** OK 0, NOT_FOUND 1, INVALID 2, any gRPC error 3, QUORUM_FAILED 4.
 - STATUS_UNSPECIFIED or an unknown status: exit 3. Proto3 enums pass unknown numbers straight through, so a newer server could send one. The CLI prints a message different from the unreachable case, because the node was reached but sent a broken reply: `ERROR: bad reply from HOST:PORT (status 0), request-id <id>`. Exit 3 already means "unreachable or broken", since every gRPC error maps to it. The request ID points straight to the server logs for what is always a server bug.
 
 **Q5. In what order is the Node built, started and stopped?**
-- **Build (`build_node`):** config, storage, ring, peers, membership, coordinator, handoff, server. Constructors only wire objects together and do no I/O: nothing is bound and no file is created.
-- **Start (`async start()`):** recover storage, then `add_insecure_port` (this binds the port, so it happens only after recovery) and start the gRPC server, storing the bound port (tests use port 0), then start the membership loop, then the handoff loop.
+- **Build (`build_node`):** config, `Storage(<data-dir>/<node_id>, config)`, ring, peers, `Membership(self_id, config, peers, ring.fingerprint(n))`, coordinator, `Handoff(self_id, config, storage, membership, peers)`, server. Constructors only wire objects together and do no I/O: nothing is bound and no file is created.
+- **Start (`async start()`):** `storage.load()`, then `add_insecure_port` (this binds the port, so it happens only after recovery) and start the gRPC server, storing the bound port (tests use port 0), then `membership.start()`, then `handoff.start()`.
 - **Stop (`async stop()`):**
   1. `server.stop(grace=2s)`.
-  2. Cancel the membership and handoff loops.
+  2. `membership.stop()` and `handoff.stop()`.
   3. Await the coordinator's background task set for up to 2s, then cancel what's left.
   4. Close the peer channels.
-  5. Close storage.
+  5. `await storage.close()`, always last.
 - `serve()` installs SIGTERM and SIGINT handlers that call `node.stop()`. Python as PID 1 ignores SIGTERM without a handler, so Docker would otherwise SIGKILL every node after 10 s.
 - Crash safety comes only from the WAL; correctness never depends on stop order.
 
@@ -136,9 +118,10 @@ and never persisted. Each node finds its own entry in `cluster.yaml` from `NODE_
 - `make up` runs `docker compose`, which sets `NODE_ID` per service using a YAML anchor. Inside the containers every node listens on 50051, mapped to host ports 50051–50055.
 - **Startup log line:** `nodeX: advertised <addr>, listening on 0.0.0.0:<port>, data <dir>, ring <fingerprint>`.
 
-**Q8. Tombstone purge**
-- Keep the SPEC's 24 h purge, applied when a snapshot is written.
-- Guard (as in Cassandra): a node that was down longer than 24 h could bring deleted keys back to life. Each node writes a `last_alive` timestamp every minute, and at startup it refuses to run if that is more than 24 h old, until its data folder is wiped.
+**Q8. Tombstone purge (changed by DEC-06)**
+- Tombstones are never purged, and there is no `last_alive` startup guard.
+- In a course demo no tombstone lives 24 h, so the purge and its guard would be code that never runs.
+- Known limitation: see 6.1.
 
 **Q9. Local-only calls: ClusterInfo, Locate, LocalGet**
 - `ClusterInfo` is answered locally and never forwarded. It returns:
@@ -198,7 +181,8 @@ and never persisted. Each node finds its own entry in `cluster.yaml` from `NODE_
 | Bind the port in `build_node` | Breaks "no I/O in build" and opens the port before recovery |
 | `--node-id` required as a flag | `make run` and Docker pass only the `NODE_ID` env var |
 | No `pyproject.toml`, `python -m client.cli` only | No `kv` command for the README and demo; tests would need path hacks |
-| Purge tombstones with no startup guard | A node down for more than 24 h could bring deleted keys back to life |
+| A separate `DeliverHint` RPC | It would do exactly what `ReplicaPut` with an empty `hint_for` does (DEC-04) |
+| 24 h tombstone purge with a `last_alive` startup guard | No tombstone lives 24 h in a course demo, so it would be code that never runs (DEC-06) |
 
 ### 3.1 Why Forward retries only on UNAVAILABLE or DEADLINE_EXCEEDED
 
@@ -242,10 +226,11 @@ class Node:
     server: grpc.aio.Server
     port: int = 0                    # set by start() from add_insecure_port
 
-    async def start(self) -> None    # recover storage → add_insecure_port + server.start → membership loop → handoff loop
-    async def stop(self) -> None     # server.stop(2) → cancel loops → coordinator.drain(2) → peers.close() → storage.close()
+    async def start(self) -> None    # storage.load() → add_insecure_port + server.start → membership.start() → handoff.start()
+    async def stop(self) -> None     # server.stop(2) → membership.stop(), handoff.stop() → coordinator.drain(2) → peers.close() → storage.close()
 
 def build_node(config: ClusterConfig, node_id: str, port: int, data_dir: str) -> Node   # wiring only: binds nothing, creates no files
+    # Storage gets <data_dir>/<node_id>; Membership gets ring.fingerprint(config.n)
 
 class KVStoreServicer(dynamo_pb2_grpc.KVStoreServicer):
     def __init__(self, node: Node) -> None
@@ -312,7 +297,7 @@ class Coordinator:
 
     # shared core, used by both put/get/delete and coordinate
     async def _do_put(self, req: PutRequest, budget: float) -> PutResponse
-        # per-key lock → new clock (Q10) → local write (1 ack) → ReplicaPut fan-out → wait W
+        # per-key lock → new clock with vclock.advance (Q10) → storage.apply (1 ack) → ReplicaPut fan-out → wait W
     async def _do_get(self, req: GetRequest, budget: float) -> GetResponse
         # local read + ReplicaGet fan-out → wait R → reconcile → values + context (Q11) → schedule repair (D7)
     async def _do_delete(self, req: DeleteRequest, budget: float) -> DeleteResponse
@@ -331,10 +316,10 @@ class Coordinator:
 class NodeServiceServicer(dynamo_pb2_grpc.NodeServiceServicer):
     def __init__(self, node: Node) -> None
     async def Forward(self, request: ForwardRequest, context) -> ForwardResponse            # → coordinator.coordinate
-    async def ReplicaPut(self, request: ReplicaPutRequest, context) -> ReplicaPutResponse   # hint_for empty → storage.apply, set → storage.put_hint
+    async def ReplicaPut(self, request: ReplicaPutRequest, context) -> ReplicaPutResponse   # hint_for empty → storage.apply, set → storage.put_hint (D9)
+        # also used for hint delivery and read repair; there is no DeliverHint RPC (DEC-04)
     async def ReplicaGet(self, request: ReplicaGetRequest, context) -> ReplicaGetResponse   # → storage.get (all versions, tombstones too)
     async def Gossip(self, request: GossipMessage, context) -> GossipMessage                # → membership.on_gossip (D0-P)
-    async def DeliverHint(self, request: ReplicaPutRequest, context) -> ReplicaPutResponse  # → storage.apply (own RPC? ask Prateek)
 ```
 
 ```python
@@ -350,9 +335,16 @@ def main(argv: list[str] | None = None) -> None
 ```
 
 ```python
-# needed from D0-P (membership.py) — item 6 of "Needs Prateek"
-def state(self, node_id: str) -> MemberState     # Coordinator._route_order
-def members(self) -> list[Member]                # ClusterInfo
+# used from D0-P (FINAL in .team/INTERFACES.md, DEC-08)
+Storage(data_dir, config)                        # build_node, data_dir = <data-dir>/<node_id>
+storage.load() / get(key) / apply(key, version) / counts() / close()
+                                                 # Node.start, ReplicaGet/LocalGet, ReplicaPut + coordinator, ClusterInfo, Node.stop
+Version                                          # in dynamo/storage.py for now
+vclock.advance(clock, node_id, counter, now_ms)  # Coordinator._do_put (Q10)
+membership.state(node_id) -> MemberState         # Coordinator._route_order
+membership.members() -> list[Member]             # ClusterInfo
+membership.on_gossip(msg) / start() / stop()     # Gossip handler, Node.start / Node.stop
+handoff.start() / stop()                         # Node.start / Node.stop
 ```
 
 ```protobuf
@@ -370,9 +362,9 @@ service NodeService {
   rpc ReplicaPut(ReplicaPutRequest) returns (ReplicaPutResponse);
   rpc ReplicaGet(ReplicaGetRequest) returns (ReplicaGetResponse);
   rpc Gossip(GossipMessage) returns (GossipMessage);               // D0-P
-  rpc DeliverHint(ReplicaPutRequest) returns (ReplicaPutResponse); // D0-P
-}
+}                                                                  // no DeliverHint (DEC-04)
 enum Status { STATUS_UNSPECIFIED = 0; OK = 1; NOT_FOUND = 2; QUORUM_FAILED = 3; INVALID = 4; }
+// MemberState { MEMBER_STATE_UNSPECIFIED = 0; ALIVE = 1; SUSPECT = 2; DEAD = 3; } is D0-P (DEC-08)
 
 // Put/Get/Delete, Forward, ReplicaPut (single Version), ReplicaGet: as in SPEC.md
 // GetResponse.context is set on NOT_FOUND too (Q11)
@@ -433,11 +425,11 @@ message LocalGetResponse { Status status = 1; repeated Version versions = 2; str
 | Repair `ReplicaPut` fails | Logged, never retried | D7 `test_repair_failure_logged` |
 | Handler raises `NotImplementedError` (D0 stub) | `UNIMPLEMENTED` | D0 `test_stub_rpcs_unimplemented` |
 | Handler raises any other exception | `abort(INTERNAL)`, counted as no ack; cancellation passes through | D0 `test_handler_internal_error` |
-| WAL write or fsync fails | Log CRITICAL, `os._exit(1)` | D1 |
+| Log write or fsync fails | Log CRITICAL, `os._exit(1)` | D1 |
+| Snapshot file error | Logged, node keeps running, next write tries again | D1 |
 | Incoming deadline shorter than `request_timeout_ms` | Budget = time left; forwarded call gets only what remains | D5 `test_budget_from_deadline` |
 | Client sets no deadline | Budget = `request_timeout_ms` | D0 `test_budget_without_deadline` |
 | Peer never heard from after boot | SUSPECT after 3 s, DEAD after 10 s | D6 |
-| Node's `last_alive` is more than 24 h old at startup | Refuses to run until its data folder is wiped | D1 |
 | Node id missing from both flag and env var, or not in config | Startup fails | D0 `test_startup_without_node_id` |
 | `make run` with empty `NODE` | Errors out | D0 (manual) |
 | `build_node` called | Binds nothing, creates no files | D0 `test_build_node_no_io` |
@@ -450,6 +442,7 @@ message LocalGetResponse { Status status = 1; repeated Version versions = 2; str
 
 ### 6.1 Known limitations
 - Two writes with the same context through the same coordinator get counters 4 and 5, so 5 looks newer and silently replaces 4 although the writes were concurrent. Dotted version vectors fix this; out of scope.
+- Tombstones are never purged (DEC-06), so they stay in memory and in every snapshot forever.
 
 ## 7. Tests
 - **Unit:**

@@ -5,7 +5,7 @@ and log the change in `.team/DECISIONS.md`.
 
 Each block is marked:
 - **FINAL** — designed by its owner, build against it. Prateek's blocks are final from
-  `.team/design/D0-P-contracts.md` (DEC-08; Meet to confirm).
+  `.team/design/D0-P-contracts.md` (DEC-08). Meet's blocks are final from `.team/design/D0-M-contracts.md` (DEC-09).
 - **DRAFT** — not frozen yet; says what it is waiting for.
 
 ---
@@ -154,10 +154,9 @@ async def cluster(tmp_path) -> Cluster                  # 5 nodes, started; stop
 - Uses Meet's `build_node(config, node_id, port, data_dir)`, `Node.start()`, `Node.stop()`,
   `node.server`, `node.peers`, `node.membership`, `node.handoff`.
 
-## server.py, reqid.py, ring.py, peers.py, coordinator.py, replica.py, client/cli.py (Meet) — DRAFT
+## server.py, reqid.py, ring.py, peers.py, coordinator.py, replica.py, client/cli.py (Meet) — FINAL
 
-Meet's signatures are in section 4 of `.team/design/D0-M-contracts.md` and are his draft until
-D0-M is DESIGNED. What they call in Prateek's modules:
+Meet's signatures are in section 4 of `.team/design/D0-M-contracts.md` and are final (DEC-09, Prateek to confirm). What they call in Prateek's modules:
 
 | Meet's code | Calls |
 |---|---|
