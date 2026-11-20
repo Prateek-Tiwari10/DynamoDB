@@ -71,3 +71,10 @@ Decision: Meet's half of D0 is frozen as written in `.team/design/D0-M-contracts
 Why: both halves can now be built against fixed names.
 Rejected: keeping a `DeliverHint` RPC and the tombstone purge in D0-M (removed per DEC-04 and DEC-06).
 Affects: `server.py`, `reqid.py`, `ring.py`, `peers.py`, `coordinator.py`, `replica.py`, `client/cli.py`, proto (request-path half), INTERFACES; D2, D4, D5, D7, D8.
+
+## DEC-10 — D2 single node: local coordinator path, context format, demo config  (2026-11-20, Meet's call, Prateek informed, from D2)
+Decision: Put/Get/Delete go through the `Coordinator`; in D2 only the "this node is the only replica" path is built, everything else answers UNIMPLEMENTED until D5. The context is already a serialized `VectorClock` proto with the DEC-02 counter rule; two temporary helpers `_encode_context` / `_parse_context` live in `coordinator.py` until D3 and are then replaced by `version.context_of` / `version.parse_context`. New shared file `cluster.single.yaml` (one node, N=R=W=1); `Makefile` uses `CONFIG ?= cluster.local.yaml`.
+Why: D5 extends the same coordinator instead of rewriting it; the context format never changes; the Phase 1 demo needs a one-node config.
+Rejected: handlers calling storage directly; an empty or JSON context until D3; changing `cluster.local.yaml` to N=1.
+Affects: `coordinator.py`, `cluster.single.yaml`, `Makefile`, D3 (swap the helpers), D5.
+

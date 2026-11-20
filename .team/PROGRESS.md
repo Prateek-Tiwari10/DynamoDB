@@ -10,7 +10,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-20 | pushed: config.py, membership.py, handoff.py (skeletons), cluster.yaml, cluster.local.yaml; left: vclock, version, gossip stub, conftest fixture |
 | D0-M | Contracts: request path, server wiring, build | Meet | REVIEW | .team/design/D0-M-contracts.md | 2026-11-20 | all code pushed incl. server.py; 121 tests pass; see REVIEW-LATER #5 |
 | D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running, retry after next 1000 writes); 31 storage tests pass |
-| D2 | Single-node server + CLI | Meet | DESIGNING | .team/design/D2-single-node.md | 2026-11-20 | draft being written |
+| D2 | Single-node server + CLI | Meet | IMPLEMENTING | .team/design/D2-single-node.md | 2026-11-20 | design confirmed (DEC-10) |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
 | D4 | Ring + static cluster + Docker | Meet | TODO | — | 2026-10-23 | |
 | D5 | Coordinator: forwarding + quorum | Meet | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D0-P implementation (vclock, version, gossip stub, test fixture)
-- **Meet:** D2 design (D0-M in REVIEW)
+- **Meet:** D2 implementation (D0-M in REVIEW)
 
 ## Blockers / questions for the partner
 
@@ -33,6 +33,8 @@ _(add a line, remove it when answered)_
 
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
+
+- **Meet → Prateek (2026-11-20):** FYI, no action needed: DEC-10 (D2). Until your D3, `coordinator.py` has temporary `_encode_context` / `_parse_context` (serialized `VectorClock`); please swap them for `version.context_of` / `parse_context` in D3. New `cluster.single.yaml` (1 node, N=R=W=1) and `Makefile` now has `CONFIG ?= cluster.local.yaml`.
 
 ## Log
 
@@ -60,3 +62,5 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-20 23:10  Prateek  notes  REVIEW-LATER.md added: reviews collected there and done after the first full version runs
 - 2026-11-20 18:30  Meet  D0-M  IMPLEMENTING → REVIEW  (server.py pushed; 121 tests pass)
 - 2026-11-20 23:30  Meet  D2  TODO → DESIGNING
+- 2026-11-20 23:45  Meet  D2  DESIGNING → DESIGNED  (confirmed by Meet, DEC-10)
+- 2026-11-20 23:45  Meet  D2  DESIGNED → IMPLEMENTING
