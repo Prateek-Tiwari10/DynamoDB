@@ -150,11 +150,11 @@ async def test_put_alone_in_a_five_node_config_fails_quorum(running):
     assert dict(await call.trailing_metadata())[METADATA_KEY] == "id-1"
 
 
-async def test_stub_rpcs_unimplemented(running):
+async def test_gossip_answers_with_its_table(running):
     _, channel, _ = running
-    with pytest.raises(grpc.aio.AioRpcError) as error:
-        await dynamo_pb2_grpc.NodeServiceStub(channel).Gossip(dynamo_pb2.GossipMessage())
-    assert error.value.code() == grpc.StatusCode.UNIMPLEMENTED
+    reply = await dynamo_pb2_grpc.NodeServiceStub(channel).Gossip(dynamo_pb2.GossipMessage(sender="node2"))
+    assert reply.sender == "node1"
+    assert "node1" in [member.node_id for member in reply.members]
 
 
 async def test_invalid_request_answers_invalid(running):
