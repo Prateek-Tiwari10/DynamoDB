@@ -9,7 +9,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 |---|---|---|---|---|---|---|
 | D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-20 | pushed: config.py, membership.py, handoff.py (skeletons), cluster.yaml, cluster.local.yaml; left: vclock, version, gossip stub, conftest fixture |
 | D0-M | Contracts: request path, server wiring, build | Meet | IMPLEMENTING | .team/design/D0-M-contracts.md | 2026-11-12 | all but server.py pushed; server.py waits for D0-P config/membership/handoff |
-| D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running); 30 storage tests pass |
+| D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running); 30 storage tests pass |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
 | D4 | Ring + static cluster + Docker | Meet | TODO | — | 2026-10-23 | |
@@ -56,3 +56,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-12 12:20  Meet  D0-M  DESIGNED → IMPLEMENTING
 - 2026-11-20 22:30  Prateek  D0-P  config, membership and handoff skeletons, cluster yamls pushed (unblocks Meet's server.py)
 - 2026-11-20 22:30  Prateek  D1  IMPLEMENTING → REVIEW  (constructor takes config; snapshot error keeps running, clear-log error exits; 30 tests pass)
+- 2026-11-20 22:45  Prateek  D1  REVIEW → IMPLEMENTING  (failed snapshot: retry after another snapshot_every writes, not on the next write)
