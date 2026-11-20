@@ -22,8 +22,10 @@ Docker Compose, built in 4 phases from a single node up to a fault-tolerant clus
 | C8 | Know which nodes are alive without a master | Gossip membership + failure detector | 3 |
 | C9 | Accept writes while a replica is down | Sloppy quorum + hinted handoff | 4 |
 | C10 | Survive a node restart without losing data | Write-ahead log + snapshot | 1 |
+| C11 | Repair replicas that drifted apart, without a read | Merkle-tree anti-entropy | 4 |
 
-Stretch (only if time allows): Merkle-tree anti-entropy, live dashboard, adding a node at runtime with key migration.
+Stretch (only if time allows): live dashboard, adding a node at runtime with key migration. (Merkle-tree
+anti-entropy moved into the main plan as C11, DEC-12.)
 
 ## Build phases
 
@@ -51,15 +53,15 @@ Each phase ends with something that runs and can be demoed.
 - Coordinator skips DEAD nodes
 - Demo: two clients write the same key with the same old context; `Get` shows two siblings; client merges and writes back. Kill a node and watch others mark it DEAD.
 
-**Phase 4 — Failure handling and benchmarks (C9)**
+**Phase 4 — Failure handling and benchmarks (C9, C11)**
 - Sloppy quorum: if a preferred node is DEAD, use the next healthy node on the ring
 - Hinted handoff: store the write with `hint_for = <real owner>`, retry delivery every 5 s, delete after success
+- Merkle anti-entropy: replicas compare hash trees of the keys they share and exchange only differing buckets
 - Chaos script: random kill/restart of containers under load
 - Benchmark script: throughput and p50/p99 latency for several N/R/W settings
 - Demo: kill a node, writes keep succeeding, restart it, the hinted data arrives; show benchmark graphs.
 
 **Phase 5 — Stretch**
-- Merkle-tree anti-entropy between replicas
 - Dashboard (FastAPI page) showing the ring, node states and key counts
 - Join a new node at runtime and migrate its key ranges
 

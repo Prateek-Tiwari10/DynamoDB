@@ -25,14 +25,14 @@ and why — that is what interviewers ask.
 | 0 | **D0-P** Data, membership & test-harness contracts | **D0-M** Request path, server wiring & build contracts | Interfaces frozen |
 | 1 | D1 Storage engine (WAL + snapshot) | D2 Single-node server + CLI | Phase 1 demo |
 | 2 | D3 Vector clocks & reconciliation | D4 Ring + static cluster + Docker | — |
-| 3 | D6 Membership + gossip + failure detector | D5 Coordinator: forwarding + quorum | Phase 2 demo |
-| 4 | D9 Hinted handoff store + delivery | D7 Read repair + membership-aware routing | Phase 3 demo |
+| 3 | D6 Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy (DEC-12) | D5 Coordinator: forwarding + quorum | Phase 2 demo |
+| 4 | (D6 continues: 6b, 6c) | D7 Read repair + membership-aware routing | Phase 3 demo |
 | 5 | D10 Chaos + cluster test suite | D8 Sloppy quorum | Phase 4 demo |
 | 6 | D12 Demo runbook + README + interview notes | D11 Benchmarks + graphs | Final demo |
-| opt | S1 Merkle anti-entropy | S2 Live dashboard | — |
+| opt | (S1 Merkle moved into D6c) | S2 Live dashboard | — |
 
 Rough effort: P ≈ 32 h, M ≈ 32 h. Coordinator (D5) is the heaviest single task, so Meet's other
-tasks are lighter; gossip (D6) is the heaviest on Prateek's side.
+tasks are lighter; D6 (gossip + hinted handoff + Merkle, combined 2026-11-21) is the heaviest on Prateek's side.
 
 Cross-review rule: each person **reviews the other's design doc before implementation starts** and
 reads the code at REVIEW. In an interview either of you must be able to explain every part.
@@ -289,9 +289,24 @@ preference list, write locally (1 ack), fan out `ReplicaPut`/`ReplicaGet`, retur
 
 ---
 
-## D6 — Membership + gossip + failure detector  ·  Prateek  ·  Phase 3  ·  Needs: D0
+## D6 — Failure detection and replica sync: gossip + hinted handoff + Merkle anti-entropy  ·  Prateek  ·  Phases 3–4  ·  Needs: D0, D1, D3
 
-**Files:** `dynamo/membership.py`, `dynamo/gossip.py`, `tests/test_membership.py`
+Combined 2026-11-21 (DEC-12) from the old D6 (membership + gossip), D9 (hinted handoff) and stretch S1
+(Merkle anti-entropy). One design doc, three parts built and pushed **in this order**, each with its
+own tests, so Meet is never blocked by a later part:
+
+| Part | What | Unblocks |
+|---|---|---|
+| **6a** | Membership + gossip + failure detector | Meet's D7 (routing needs node states) |
+| **6b** | Hinted handoff: hint store in storage + delivery loop | Meet's D8 (sloppy quorum writes hints); D10 |
+| **6c** | Merkle anti-entropy between replicas | D10 chaos tests, demo |
+
+**Files:** `dynamo/membership.py`, `dynamo/gossip.py`, `dynamo/handoff.py`, hint functions in
+`dynamo/storage.py`, new `dynamo/merkle.py` (tree, pure functions) and anti-entropy loop (file name
+decided in the design), tests. Shared/partner files that 6c needs: new RPCs in `proto/dynamo/dynamo.proto`
+and their handlers in Meet's `replica.py` (agree with Meet, DEC entry).
+
+### 6a — Membership + gossip + failure detector
 
 **Requirement.** Every `gossip_interval_ms` push-pull the membership table with one random peer.
 ALIVE → SUSPECT after 3 s without heartbeat progress → DEAD after 10 s. Incarnation-based refutation.
@@ -309,9 +324,49 @@ Expose the `Membership` interface from D0, including `subscribe` (handoff needs 
 **Done when:** in-process tests for merge rule and refutation; kill a node → all others show SUSPECT
 by ~3 s and DEAD by ~10 s; restart → ALIVE again; `kv info` shows states.
 
+### 6b — Hinted handoff store + delivery
+
+**Requirement.** Stand-ins persist hints (survive restart), retry delivery every `handoff_retry_ms` to
+owners that are ALIVE, delete only after the owner acks. Storage signatures are already frozen in
+INTERFACES (`put_hint`, `hints`, `drop_hint`; the log line already has a `hint_for` field).
+
+**Design questions**
+1. Delivered twice (ack lost) — why is that harmless? (Reconcile again.)
+2. Deliver one hint per RPC, or batch per owner? Order of delivery?
+3. Owner never comes back (permanently removed) — keep hints forever, expire after X, or out of scope? State it. (6c also covers this case.)
+4. Stand-in restarts before delivering — hints must replay from disk; how do you delete a hint durably?
+5. Use the `subscribe` callback to deliver immediately when an owner turns ALIVE, or only the periodic loop? (Simplest correct option is fine.)
+6. Does the stand-in serve hinted data on reads in the meantime? (Must match D8's answer.)
+
+**Done when:** kill owner → write with sloppy quorum → restart owner → within ~5 s owner has the data and the hint is gone (also after a stand-in restart).
+
+### 6c — Merkle anti-entropy
+
+**Requirement.** Replicas that drifted apart (a hint was lost because the stand-in died, a node was
+down longer than the hints lasted, a write reached fewer than N replicas) converge in the background
+without any client read. Two replicas compare a Merkle tree (hash tree) of the keys they share; equal
+roots mean nothing to do; different roots lead down to the differing buckets, and only those keys'
+versions are exchanged and merged with `storage.apply` (`merge_into`, so it is safe in any order and
+any number of times).
+
+**Design questions**
+1. **What does one tree cover?** One tree per ring range (Dynamo: per key range a node replicates), or one tree per pair of replicas over the keys both should own? Which is simpler to get right?
+2. **Leaf content:** hash of key + its versions (clocks, values, tombstone flags) in a fixed, sorted encoding, so two nodes with the same data get the same hash. Include tombstones? (They must spread too.) Exclude hints?
+3. **Tree shape:** fixed number of buckets (e.g. `hash(key) mod 2^k`) and fixed depth, so two nodes' trees line up node by node. What k for ~10,000 keys?
+4. **Build:** rebuild from the dict at the start of each sync round (simple, fine for 10k keys), or keep it updated on every write?
+5. **Protocol:** send the root, then walk down one level per RPC; or send all leaf-bucket hashes in one RPC and compare locally? Then fetch/push the versions of differing buckets.
+6. **Direction:** pull only, push only, or both ways in one round?
+7. **Schedule:** how often, with which peer (one random ALIVE replica per round)? Skip while gossip says the peer is not ALIVE.
+8. **Proto + handlers:** the new RPCs and messages (shared proto file) and where their handlers live (Meet's `replica.py` calls into a Prateek function?) — agree with Meet.
+9. **Versus read repair (D7) and hinted handoff (6b):** what each one fixes, and why we need all three (interview question).
+
+**Done when:** two replicas made to differ on purpose (write to one with the others stopped, or delete
+a key's log on one) converge within a few rounds with no client read; a sync of identical replicas
+sends only the root; random test: after sync, both replicas have the same `fingerprint` for every key.
+
 ---
 
-## D7 — Read repair + membership-aware routing  ·  Meet  ·  Phase 3  ·  Needs: D5, D6
+## D7 — Read repair + membership-aware routing  ·  Meet  ·  Phase 3  ·  Needs: D5, D6a
 
 **Files:** `dynamo/coordinator.py`, tests
 
@@ -329,7 +384,7 @@ behind, in the background. Coordinator skips DEAD nodes; fast `QUORUM_FAILED` wh
 
 ---
 
-## D8 — Sloppy quorum  ·  Meet  ·  Phase 4  ·  Needs: D7, D9 interface
+## D8 — Sloppy quorum  ·  Meet  ·  Phase 4  ·  Needs: D7, D6b interface
 
 **Files:** `dynamo/coordinator.py`, tests
 
@@ -348,26 +403,13 @@ sloppy quorum on/off (needed for cluster tests 3 and 4).
 
 ---
 
-## D9 — Hinted handoff store + delivery  ·  Prateek  ·  Phase 4  ·  Needs: D1, D6
+## D9 — merged into D6 (part 6b)  ·  2026-11-21, DEC-12
 
-**Files:** `dynamo/handoff.py` (+ hint functions in `storage.py`), tests
-
-**Requirement.** Stand-ins persist hints (survive restart), retry delivery every `handoff_retry_ms` to
-owners that are ALIVE, delete only after the owner acks.
-
-**Design questions**
-1. Delivered twice (ack lost) — why is that harmless? (Reconcile again.)
-2. Deliver one hint per RPC, or batch per owner? Order of delivery?
-3. Owner never comes back (permanently removed) — keep hints forever, expire after X, or out of scope? State it.
-4. Stand-in restarts before delivering — hints must replay from disk; how do you delete a hint durably?
-5. Use the `subscribe` callback to deliver immediately when an owner turns ALIVE, or only the periodic loop? (Simplest correct option is fine.)
-6. Does the stand-in serve hinted data on reads in the meantime? (Must match D8's answer.)
-
-**Done when:** kill owner → write with sloppy quorum → restart owner → within ~5 s owner has the data and the hint is gone (also after a stand-in restart).
+Hinted handoff is now part **6b** of D6. Anything that said "needs D9" now needs D6b.
 
 ---
 
-## D10 — Chaos + cluster test suite  ·  Prateek  ·  Phase 4  ·  Needs: D8, D9 (start on phase-3 system)
+## D10 — Chaos + cluster test suite  ·  Prateek  ·  Phase 4  ·  Needs: D8, D6b, D6c (start on phase-3 system)
 
 **Files:** `tools/chaos.py`, `tests/cluster/`
 
@@ -420,5 +462,5 @@ decision, the rejected alternative and why.
 
 ## Stretch (only after D1–D12 are DONE)
 
-- **S1 Merkle anti-entropy** (Prateek) — per-key-range Merkle trees, compare roots, sync differing ranges.
+- ~~S1 Merkle anti-entropy~~ — moved into the main plan as **D6c** (DEC-12).
 - **S2 Live dashboard** (Meet) — small FastAPI page: ring, node states, key counts per node.
