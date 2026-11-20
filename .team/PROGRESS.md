@@ -13,7 +13,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, Meet to confirm); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
-| D5 | Coordinator: forwarding + quorum | Meet | TODO | — | 2026-10-23 | |
+| D5 | Coordinator: forwarding + quorum | Meet | DESIGNING | .team/design/D5-coordinator.md | 2026-11-21 | draft being written |
 | D6 | Membership + gossip + failure detector | Prateek | TODO | — | 2026-10-23 | |
 | D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
 | D8 | Sloppy quorum | Meet | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** rest of D0-P (gossip stub, test cluster fixture), then D6
-- **Meet:** next: D5 coordinator (D0-M, D2, D4 in REVIEW)
+- **Meet:** D5 design (D0-M, D2, D4 in REVIEW)
 
 ## Blockers / questions for the partner
 
@@ -71,3 +71,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 00:40  Meet  D4  DESIGNED → IMPLEMENTING
 - 2026-11-21 01:10  Meet  D4  IMPLEMENTING → REVIEW  (local cluster CLUSTER OK; Docker not run)
 - 2026-11-21 01:30  Prateek  D3  IMPLEMENTING → REVIEW  (vclock, version, storage merge_into; Meet's coordinator/replica swapped with Prateek's OK; DEC-11; 217 tests pass)
+- 2026-11-21 01:40  Meet  D5  TODO → DESIGNING
