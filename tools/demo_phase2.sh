@@ -22,7 +22,15 @@ start_node() {
 step() { echo; echo "== $*"; }
 fail() { echo "PHASE 2 DEMO FAILED: $*"; exit 1; }
 
-kv --node localhost:50051 info >/dev/null 2>&1 || fail "no cluster on localhost:50051 (start it first)"
+# Wait until all 5 nodes answer (containers may still be starting right after `make up`).
+for i in 1 2 3 4 5; do
+    for attempt in $(seq 50); do
+        kv --node "localhost:5005$i" info >/dev/null 2>&1 && break
+        [ "$attempt" -lt 50 ] || fail "node$i does not answer on localhost:5005$i (start the cluster first)"
+        sleep 0.2
+    done
+done
+sleep 1.5   # let node-to-node channels that were refused during startup reconnect (1 s backoff)
 
 step "replicas of $KEY"
 placement=$(kv --node localhost:50051 locate "$KEY") || fail "locate"
