@@ -66,9 +66,11 @@ class Storage:
 - `load()` must finish before the server binds its port. `get`, `apply` and `counts` raise
   `RuntimeError` before it.
 - An error on the log file (write, `fsync`, clear) → CRITICAL + `os._exit(1)`, no retry (DEC-06).
-  An error on the snapshot files → logged, the node keeps running, the next write tries again.
-- Until D3, `apply` always stores (newest write replaces) and returns True. The `Version` dataclass
-  moves to its final shape (a `VectorClock` instead of a plain dict) in the D3 design.
+  An error on the snapshot files → logged, the node keeps running, the counter is reset and the
+  snapshot is tried again after the next `snapshot_every` writes (D1 §5.3).
+- Since D3 (DEC-11), `apply` stores `version.merge_into(current, version)`. It returns False and
+  writes no log line when nothing changes (duplicate or stale write). `Version` lives in
+  `dynamo/version.py` (`dynamo.storage.Version` still works) and its `clock` is a `VectorClock`.
 
 ## vclock.py (Prateek) — FINAL signatures, logic in D3
 
@@ -82,22 +84,40 @@ class Order(Enum): BEFORE, AFTER, EQUAL, CONCURRENT
 
 def compare(a: VectorClock, b: VectorClock) -> Order
 def merge(a: VectorClock, b: VectorClock) -> VectorClock          # per node, the higher counter
-def advance(clock: VectorClock, node_id: str, counter: int, now_ms: int) -> VectorClock
-    # returns a copy with counters[node_id] = counter; the coordinator computes `counter` (DEC-02)
-def prune(clock: VectorClock, max_entries: int) -> VectorClock    # drop entries with the oldest updated_ms
+def advance(clock: VectorClock, node_id: str, counter: int, now_ms: int | None = None) -> VectorClock
+    # returns a copy with counters[node_id] = counter, updated_ms[node_id] = now_ms (None = now);
+    # the coordinator computes `counter` (DEC-02)
+def prune(clock: VectorClock, self_id: str, max_entries: int = 10) -> VectorClock
+    # copy; drop the oldest updated_ms (tie: smaller node id) until <= max_entries; never self_id.
+    # Only the coordinator calls it, right after advance (DEC-11)
+def to_json(clock: VectorClock) -> dict[str, list[int]]           # {node: [counter, updated_ms]}
+def from_json(raw: object, known_nodes: Collection[str] | None = None) -> VectorClock   # ValueError if bad
 ```
 
 ## version.py (Prateek) — FINAL signatures, logic in D3
 
 ```python
+@dataclass
+class Version:
+    value: bytes = b""                     # empty for a tombstone
+    clock: VectorClock = VectorClock()
+    tombstone: bool = False
+
 def reconcile(versions: list[Version]) -> list[Version]
-    # drop every version that is BEFORE another; collapse versions with the same value and
-    # tombstone flag into one with merged clocks; result is pairwise CONCURRENT
+    # EQUAL clocks become one (same value: clocks merged; different value: smaller (tombstone, value)
+    # wins + WARNING); drop every version that is BEFORE another; NO collapse of same-value
+    # siblings (DEC-11); sorted by clock; result is pairwise CONCURRENT
 def merge_into(existing: list[Version], incoming: Version) -> tuple[list[Version], bool]
-    # what a replica stores after receiving `incoming`; bool = whether anything changed
-def context_of(versions: list[Version]) -> bytes        # merged clock of all versions, tombstones included
-def parse_context(data: bytes) -> VectorClock           # empty bytes -> empty clock; bad bytes -> ValueError (server answers INVALID)
+    # reconcile(existing + [incoming]); bool = whether the stored set changed
+def fingerprint(versions: list[Version]) -> frozenset    # order-free identity of a version set (tests)
+def context_of(versions: list[Version]) -> bytes        # merged clock of all versions, tombstones included,
+    # as JSON {"node":[counter,updated_ms]} with sorted keys; b"" for no versions; not pruned
+def parse_context(data: bytes, known_nodes: Collection[str]) -> VectorClock
+    # b"" -> empty clock; bad UTF-8/JSON, unknown node id, entry not two non-negative ints (bool
+    # rejected) -> ValueError (server answers INVALID)
 ```
+
+- The coordinator's Get sends equal values once (storage keeps same-value siblings apart).
 
 ## membership.py, gossip.py (Prateek) — FINAL signatures, logic in D6
 

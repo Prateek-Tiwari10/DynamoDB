@@ -279,14 +279,15 @@ Hints live in `hints: dict[str, list[(key, Version)]]` keyed by the real owner.
 |---|---|
 | `advance(clock, node_id, counter, now_ms)` | `counters[node_id] = counter`, `updated_ms[node_id] = now_ms`; the coordinator computes `counter` |
 | `compare(a, b)` | `BEFORE` if every counter in a ≤ b and one is <; `AFTER` for the reverse; `EQUAL`; otherwise `CONCURRENT` |
-| `merge(a, b)` | Per node, take the max counter |
-| `prune(clock)` | If more than 10 entries, drop the one with the oldest `updated_ms` |
+| `merge(a, b)` | Per node, take the max counter and the max `updated_ms` |
+| `prune(clock, self_id)` | If more than 10 entries, drop the one with the oldest `updated_ms` (tie: smaller node id), never `self_id`; coordinator only (DEC-11) |
 
 Storing a new version on a replica
 1. For each existing version: if it is `BEFORE` the new one, drop it.
 2. If any existing version is `AFTER` or `EQUAL` to the new one, ignore the new one (stale).
 3. Otherwise append the new one; the key now has siblings.
-4. Siblings with the same value and tombstone flag collapse into one, with their clocks merged.
+4. Siblings with the same value are **not** collapsed (DEC-11: collapsing depends on arrival order).
+   Versions with EQUAL clocks become one (clocks merged; different values: smaller `(tombstone, value)` wins).
 
 Coordinator write: the new clock is the merged context clocks with the coordinator's own counter set to
 `max(context[self], highest own counter among its local versions of the key) + 1`, under a per-key lock.
@@ -319,7 +320,7 @@ Get(key)
 1. Routing as in Put steps 1–2.
 2. C reads locally and sends `ReplicaGet` to the other N−1 replicas in parallel.
 3. When R responses arrive, merge: drop any version `BEFORE` another; the rest are siblings.
-4. Return values + merged context. All tombstones → `NOT_FOUND`, still with the context.
+4. Return values (equal values once) + merged context. All tombstones → `NOT_FOUND`, still with the context.
 5. Read repair (phase 3): push winning version(s) to replicas that were missing/older, in the background.
 
 When a replica is DEAD (phase 4)

@@ -1,6 +1,6 @@
 # D3 — Vector clocks and reconciliation
 
-Owner: Prateek · Reviewer: Meet (later, see REVIEW-LATER.md) · Status: IMPLEMENTING · Date: 2026-11-21
+Owner: Prateek · Reviewer: Meet (later, see REVIEW-LATER.md) · Status: REVIEW · Date: 2026-11-21
 
 Saved word for word from Prateek's design chat ("D3 — Vector Clocks: Implementation Instructions").
 The design is in the numbered sections below; it is updated as each topic is decided. Shared-file
@@ -212,4 +212,35 @@ Tombstones are never purged (DEC-06); a tombstone is just a version with `tombst
 
 ## As built
 
-_Filled after implementation._
+Built 2026-11-21. Files: `dynamo/vclock.py`, `dynamo/version.py`, `dynamo/storage.py`;
+tests `tests/test_vclock.py` (37), `tests/test_version.py` (32), `tests/test_storage.py` (+4 D3
+tests). With Prateek's OK, also Meet's `coordinator.py`, `replica.py`, `tests/test_coordinator.py`
+(commit `c70fa57`, DEC-11). Full suite: 217 passed, 1 skipped.
+
+Built as designed: sections 1–8, including every test listed. The code snippets of the original
+chat note are not repeated above; the code is in the files.
+
+What differs, and why:
+- **`Version` keeps the field order `(value, clock, tombstone)`**, not `(value, tombstone, clock)`
+  as written in §7, because existing code and tests build it positionally; all new code uses
+  keywords. `Version` moved from `storage.py` to `version.py`; `dynamo.storage.Version` still
+  imports.
+- **`snapshot(vs)` from §7 is named `fingerprint(vs)`**, because "snapshot" already means the
+  storage snapshot file.
+- **`__eq__` is the dataclass default**, which compares both dicts as §1 asks.
+- **The JSON form lives in `vclock.py`** (`to_json` / `from_json`); `version.context_of` /
+  `parse_context` and the storage files both use it. `from_json` does the §6 checks; the
+  `known_nodes` check runs only when a set is given (client context), not for storage files.
+- **`parse_context` also rejects very deeply nested JSON** (`RecursionError` → ValueError).
+- **Storage replay uses `merge_into` too**, so the log rebuilds the same sibling sets; a
+  duplicate or stale write returns False with no log line and does not count toward the snapshot.
+- **Storage tests** now give each `put()` / `tombstone()` a newer clock (node1 counter +1), because
+  two writes with empty clocks are EQUAL, not "newer replaces older".
+- **Meet's files (§9):** temporary `_encode_context` / `_parse_context` removed; Put/Delete use
+  `parse_context(req.context, config.nodes)` and `context_of`; `_new_clock` = context →
+  `advance` → `prune(self_id, vclock_max_entries)`; Get sends equal values once;
+  `version_to_proto` / `version_from_proto` carry `updated_ms`. §9 item 2 (proto `updated_ms`)
+  was already in the proto. A coordinator test that sent a context with `node7` now uses a config
+  that knows `node7`, plus new tests: unknown node → INVALID, `updated_ms` stamped, same-value
+  siblings sent once. `FakeStorage.apply` uses `merge_into`.
+- Old data folders (old clock format) are not readable, as §8 says; none existed here.

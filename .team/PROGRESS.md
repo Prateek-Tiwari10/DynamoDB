@@ -11,7 +11,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D0-M | Contracts: request path, server wiring, build | Meet | REVIEW | .team/design/D0-M-contracts.md | 2026-11-20 | all code pushed incl. server.py; 121 tests pass; see REVIEW-LATER #5 |
 | D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running, retry after next 1000 writes); 31 storage tests pass |
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
-| D3 | Vector clocks & reconciliation | Prateek | IMPLEMENTING | .team/design/D3-vector-clocks.md | 2026-11-21 | design from Prateek's chat; DEC-11 (Meet to confirm) |
+| D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, Meet to confirm); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local 5-node cluster checked (`CLUSTER OK`); Docker `make up` not yet run (no Docker on Meet's laptop); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | TODO | — | 2026-10-23 | |
 | D6 | Membership + gossip + failure detector | Prateek | TODO | — | 2026-10-23 | |
@@ -24,17 +24,17 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D3 implementation (vclock.py, version.py, storage switch); then rest of D0-P (gossip stub, test fixture)
+- **Prateek:** rest of D0-P (gossip stub, test cluster fixture), then D6
 - **Meet:** next: D5 coordinator (D0-M, D2, D4 in REVIEW)
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-21):** D3 is in (DEC-11, please confirm). I changed **your** files so main stays green (commit `c70fa57`, Prateek's OK): `coordinator.py` now uses `version.parse_context(req.context, config.nodes)` / `context_of` (your temporary helpers are gone, as DEC-10 planned), `_new_clock` = context → `vclock.advance` → `vclock.prune`, Get sends equal values once; `replica.py` carries `updated_ms` both ways; `tests/test_coordinator.py` updated. The context is now JSON, not the proto bytes (DEC-11 says why). `Storage.apply` returns False for a duplicate/stale write. Old `data/` folders are not readable; delete them. This answers your DEC-10 FYI line, so I removed it.
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 
-- **Meet → Prateek (2026-11-20):** FYI, no action needed: DEC-10 (D2). Until your D3, `coordinator.py` has temporary `_encode_context` / `_parse_context` (serialized `VectorClock`); please swap them for `version.context_of` / `parse_context` in D3. New `cluster.single.yaml` (1 node, N=R=W=1) and `Makefile` now has `CONFIG ?= cluster.local.yaml`.
 
 ## Log
 
@@ -70,3 +70,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 00:40  Meet  D4  DESIGNING → DESIGNED  (confirmed by Meet)
 - 2026-11-21 00:40  Meet  D4  DESIGNED → IMPLEMENTING
 - 2026-11-21 01:10  Meet  D4  IMPLEMENTING → REVIEW  (local cluster CLUSTER OK; Docker not run)
+- 2026-11-21 01:30  Prateek  D3  IMPLEMENTING → REVIEW  (vclock, version, storage merge_into; Meet's coordinator/replica swapped with Prateek's OK; DEC-11; 217 tests pass)

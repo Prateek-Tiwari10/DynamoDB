@@ -122,3 +122,27 @@ REVIEW and move to Prateek's next task; Meet's change requests are done later as
 **State left:** D0-M = REVIEW (REVIEW-LATER #5). D0-P = IMPLEMENTING (Prateek: vclock, version, gossip stub, conftest fixture). D1 = REVIEW.
 
 **Next step:** Meet designs D2 (single-node Put/Get/Delete, Phase 1 demo) and D4 (5-node Docker cluster).
+
+## Session 5 — 2026-11-20/21 · Prateek · D0-P files pushed, D1 done, D3 built, review-later rule
+
+**Done:**
+- Pushed the D0-P files Meet's `server.py` waited for: `config.py`, `membership.py` and `handoff.py`
+  skeletons, `cluster.yaml`, `cluster.local.yaml`, `Storage(data_dir, config)`. (Written in an
+  earlier session that left no history entry.)
+- D1 follow-up: a failed snapshot keeps the node running; Prateek changed the retry to "after the
+  next 1000 writes" (counter reset, log kept). Failed log clear exits. D1 doc §5.3, §6, §8 Q9, §9
+  updated. D1 → REVIEW.
+- New working rule (Prateek): finish the project first, review later. Reviews are collected in
+  `.team/REVIEW-LATER.md` and done after the first full version runs. Stop only for things that
+  are wrong or hard to defend in an interview; simple over complex.
+- D3 from Prateek's design chat (saved as `.team/design/D3-vector-clocks.md`): `vclock.py`,
+  `version.py`, storage on `merge_into`, JSON context, no same-value collapse. With Prateek's OK,
+  also swapped Meet's `coordinator.py` / `replica.py` / coordinator tests so main stayed green.
+  DEC-11 (Meet to confirm). D3 → REVIEW. 217 tests pass.
+
+**State left:** D0-P IMPLEMENTING (left: gossip stub, test cluster fixture). D1, D3 = REVIEW.
+Meet: D0-M, D2, D4 in REVIEW.
+
+**Next step:** finish D0-P (gossip stub, `tests/conftest.py` cluster fixture, using Meet's
+`server.py` / D4 in-process cluster), then D6 (membership + gossip + failure detector).
+
