@@ -6,12 +6,18 @@ copied to ``snapshot.json`` and the log is cleared. On startup the dict is rebui
 snapshot plus the log.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dynamo.config import ClusterConfig
 
 WAL_FILE = "wal.log"
 SNAPSHOT_FILE = "snapshot.json"
@@ -71,10 +77,10 @@ def decode_line(line: bytes) -> tuple[str, Version] | None:
 class Storage:
     """All keys of one node, in memory, with a write-ahead log and snapshots on disk."""
 
-    def __init__(self, data_dir: str, snapshot_every: int = 1000) -> None:
+    def __init__(self, data_dir: str, config: ClusterConfig) -> None:
         """Remember the settings. Does no disk work; call load() before anything else."""
         self.data_dir = data_dir
-        self.snapshot_every = snapshot_every
+        self.snapshot_every = config.snapshot_every
         self.wal_path = os.path.join(data_dir, WAL_FILE)
         self.snapshot_path = os.path.join(data_dir, SNAPSHOT_FILE)
         self.snapshot_tmp_path = os.path.join(data_dir, SNAPSHOT_TMP_FILE)

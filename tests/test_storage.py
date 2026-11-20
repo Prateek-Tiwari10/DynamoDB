@@ -9,7 +9,13 @@ import time
 
 import pytest
 
+from dynamo.config import ClusterConfig
 from dynamo.storage import CorruptLogError, Storage, Version, encode_line
+
+
+def config(snapshot_every: int = 1000) -> ClusterConfig:
+    return ClusterConfig(nodes={"node1": "localhost:50051"}, n=1, r=1, w=1,
+                         snapshot_every=snapshot_every)
 
 
 def put(value: bytes) -> Version:
@@ -21,7 +27,7 @@ def tombstone() -> Version:
 
 
 def open_storage(folder, snapshot_every: int = 1000) -> Storage:
-    storage = Storage(str(folder), snapshot_every)
+    storage = Storage(str(folder), config(snapshot_every))
     storage.load()
     return storage
 
@@ -349,7 +355,7 @@ def test_concurrent_puts_same_key(tmp_path):
 # ---------------------------------------------------------------- restart
 
 def test_no_requests_before_load(tmp_path):
-    storage = Storage(str(tmp_path))                  # load() not called yet
+    storage = Storage(str(tmp_path), config())        # load() not called yet
     with pytest.raises(RuntimeError):
         storage.get("a")
     with pytest.raises(RuntimeError):

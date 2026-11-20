@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from dynamo.config import ClusterConfig
 from dynamo.storage import Storage, Version
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,11 @@ TOTAL_KEYS = 500
 
 def value_for(key: str) -> bytes:
     return f"value-of-{key}".encode()
+
+
+def config(snapshot_every: int) -> ClusterConfig:
+    return ClusterConfig(nodes={"node1": "localhost:50051"}, n=1, r=1, w=1,
+                         snapshot_every=snapshot_every)
 
 
 # ------------------------------------------------------------------ child
@@ -50,7 +56,7 @@ def pause_at(storage: Storage, point: str) -> None:
 
 
 async def child_main(data_dir: str, snapshot_every: int, pause_point: str, pause_on: int) -> None:
-    storage = Storage(data_dir, snapshot_every)
+    storage = Storage(data_dir, config(snapshot_every))
     storage.load()
     for i in range(TOTAL_KEYS):
         if pause_point and i + 1 == pause_on * snapshot_every:
@@ -93,7 +99,7 @@ def run_and_kill(data_dir, snapshot_every: int, kill_after: int = 0,
 
 
 def load_and_check(data_dir, snapshot_every: int, acked: list[str]) -> Storage:
-    storage = Storage(str(data_dir), snapshot_every)
+    storage = Storage(str(data_dir), config(snapshot_every))
     storage.load()
     for key in acked:
         versions = storage.get(key)
