@@ -27,6 +27,7 @@ of copying what a production system like Dynamo or Cassandra does.
 | 8 | D3 vector clocks: `vclock.py`, `version.py`, storage switch, DEC-11 | Prateek | Meet | 2026-11-21 | JSON context replaces proto context; no same-value collapse |
 | 9 | Prateek's edits to Meet's `coordinator.py`, `replica.py`, `tests/test_coordinator.py` (commit `c70fa57`) | Prateek | Meet | 2026-11-21 | made so main stayed green; check they match your D5 plans |
 | 10 | D0-P rest: `gossip.py` stub, shared test cluster `tests/conftest.py`, `tests/test_cluster_harness.py` | Prateek | Meet | 2026-11-21 | 5 questions answered in D0-P §9; kill also cancels coordinator tasks; suggestion for Meet: `grpc.so_reuseport = 0` in `build_node` |
+| 11 | Prateek's edit to Meet's `tests/test_server.py` (commit `685c1bf`): Gossip-unimplemented test → Gossip answers with table | Prateek | Meet | 2026-11-21 | needed because 6a built the Gossip RPC |
 
 ## Done
 

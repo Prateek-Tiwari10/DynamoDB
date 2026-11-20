@@ -164,3 +164,21 @@ Meet: D0-M, D2, D4 in REVIEW.
 
 **Next step:** D6 (membership + gossip + failure detector), tested with the new cluster fixture.
 
+## Session 7 — 2026-11-21 · Prateek · D6 combined, 6a gossip built
+
+**Done:**
+- D6, D9 and stretch S1 combined into one task D6 (6a gossip, 6b hinted handoff, 6c Merkle
+  anti-entropy), DEC-12; Merkle moved into the main plan (SPEC C11).
+- 6a design from Prateek's chat saved as `.team/design/D6-failure-detection.md`; DEC-13 (refutation
+  `>` rule, `suspect_after_ms` 3000 → 5000), Meet to confirm.
+- 6a built: `membership.py` (merge, refutation, states, callbacks), `gossip.py` (fixed-rate loop,
+  `send_gossip`), 46 new/updated tests; full suite 292 passed. Live 5-process check: SUSPECT ~5 s,
+  DEAD ~10 s, ALIVE after restart.
+- Found and fixed: gossip at t=0 put peer channels in reconnect backoff and broke Meet's D5 cluster
+  tests; first round now one interval after start. Meet's `test_server.py` Gossip test updated.
+
+**State left:** D6 IMPLEMENTING (6a done, 6b/6c to design). D0-P, D1, D3 = REVIEW.
+Meet: D0-M, D2, D4, D5 in REVIEW; D7 can start now.
+
+**Next step:** design 6b (hinted handoff) in the design chat, then 6c (Merkle).
+

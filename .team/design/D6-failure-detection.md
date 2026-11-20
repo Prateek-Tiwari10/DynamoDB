@@ -270,4 +270,41 @@ Files to change:
 
 ## 6a — As built
 
-_Filled after implementation._
+Built 2026-11-21. Commits `056d14d` (config, shared), `ca1cbd5` (membership, gossip, tests), `685c1bf`
+(Meet's `tests/test_server.py`). Files: `dynamo/membership.py`, `dynamo/gossip.py`,
+`tests/test_membership.py` (36), new `tests/test_gossip.py` (10), `tests/conftest.py` (suspect 500 ms),
+`dynamo/config.py` + `cluster.yaml` + `cluster.local.yaml` (suspect 5000, DEC-13). Full suite 292
+passed, 1 skipped, 5 runs in a row.
+
+Built as designed: §2–§5 (merge rule, `>` refutation, local states from monotonic heartbeat age,
+DEAD → ALIVE direct, callbacks isolated, peer from all other nodes, failed RPC changes nothing,
+`wait_for` timeout `min(rpc, interval)`, fixed-rate ticks, `send_gossip` patch point, `boot_ms`).
+
+What differs, and why:
+- **The first gossip round runs one interval after `start()`, not at once.** Found when the full
+  suite ran: nodes start one after another, so a round at t=0 mostly hit peers that were not
+  listening yet; gRPC then held that channel in reconnect backoff (Meet's max 1 s), and Meet's D5
+  cluster tests, which write through the same channels right after startup, failed with
+  UNAVAILABLE / QUORUM_FAILED (4 tests, flaky). Starting 5 test nodes takes ~4 ms, far below one
+  interval (100 ms in tests, 1 s in production). Timers still start at boot (DEC-03); only the first
+  heartbeat goes out one interval later.
+- **`_last_seen` is also filled in `__init__`** (monotonic now), not only in `start()`, so
+  `check_states` works on a Membership that was never started (unit tests); `start()` resets it.
+- **The state-change log line reads `membership: node3 ALIVE -> SUSPECT`**, not `gossip: …`: the log
+  format prints the source module, and `check_states` is in `membership.py` (§4.3).
+- **Kill / SUSPECT cluster tests record the changes with `subscribe`** on every other node instead of
+  polling ClusterInfo for SUSPECT on all of them at once (the SUSPECT window is only 500 ms per node
+  and the nodes' windows are offset, so polling could miss it). One extra test polls ClusterInfo on
+  node1 for SUSPECT; others poll ClusterInfo for DEAD and ALIVE.
+- **Extra tests:** `test_empty_fingerprint_is_not_a_mismatch`, `test_own_row_never_overwritten_or_suspected`,
+  `test_tick_raises_own_heartbeat`, `test_slow_rpc_is_cut_by_timeout` (unit, no cluster).
+- **Removed** `test_gossip_not_built_yet` (as §7 says) and the harness test `test_gossip_loop_is_a_stub`.
+- **Meet's `tests/test_server.py`:** `test_stub_rpcs_unimplemented` used Gossip as its example of an
+  unbuilt RPC; it now checks that Gossip answers with the member table
+  (`test_gossip_answers_with_its_table`). The "unbuilt RPC → UNIMPLEMENTED" path is still covered by
+  his `test_hinted_replica_put_unimplemented`.
+
+Live check (5 local processes, `tools/cluster_local.sh`, production timers): `kv info` on node1 showed
+node3 SUSPECT 6.5 s after `kill -9` and DEAD at 11.5 s (log: `ALIVE -> SUSPECT` 5.0 s and
+`SUSPECT -> DEAD` 10.0 s after the last heartbeat); after a restart, ALIVE within 3 s with a new
+incarnation.
