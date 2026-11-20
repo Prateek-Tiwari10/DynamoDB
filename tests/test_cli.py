@@ -185,3 +185,19 @@ def test_context_file_keyed_by_key_and_written_atomically(tmp_path):
 
 def test_missing_context_file_means_empty_context(tmp_path):
     assert load_context(str(tmp_path / "none.json"), "k") == b""
+
+
+def test_empty_context_file_means_empty_context(tmp_path):
+    path = tmp_path / "ctx.json"
+    path.write_text("")
+    assert load_context(str(path), "k") == b""
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1, 2]"])
+def test_broken_context_file_is_ignored_with_a_warning(tmp_path, capsys, text):
+    path = tmp_path / "ctx.json"
+    path.write_text(text)
+    assert load_context(str(path), "k") == b""
+    assert "ignoring broken context file" in capsys.readouterr().err
+    save_context(str(path), "k", b"\x01")             # the next save repairs it
+    assert load_context(str(path), "k") == b"\x01"

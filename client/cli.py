@@ -91,12 +91,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ---------- context file ----------
 
 def _read_context_file(path: str) -> dict[str, str]:
-    """The whole context file: key -> base64 context. Missing file = empty."""
+    """The whole context file: key -> base64 context. A missing or empty file means no contexts.
+    A broken file is reported and ignored (it is only a cache; the next save rewrites it)."""
     try:
         with open(path, encoding="utf-8") as file:
-            return json.load(file)
+            text = file.read()
     except FileNotFoundError:
         return {}
+    if not text.strip():
+        return {}
+    try:
+        contexts = json.loads(text)
+    except json.JSONDecodeError:
+        contexts = None
+    if not isinstance(contexts, dict):
+        _err(f"warning: ignoring broken context file {path}")
+        return {}
+    return contexts
 
 
 def load_context(path: str, key: str) -> bytes:
