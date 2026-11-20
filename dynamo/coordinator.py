@@ -12,8 +12,6 @@ import logging
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
-from google.protobuf.message import DecodeError
-
 from dynamo.dynamo_pb2 import (
     INVALID,
     NOT_FOUND,
@@ -26,9 +24,10 @@ from dynamo.dynamo_pb2 import (
     GetResponse,
     PutRequest,
     PutResponse,
-    VectorClock,
 )
-from dynamo.storage import Version
+from dynamo import vclock
+from dynamo.vclock import VectorClock
+from dynamo.version import Version, context_of, parse_context
 
 if TYPE_CHECKING:
     from dynamo.config import ClusterConfig
@@ -48,35 +47,6 @@ def request_budget(context, config: ClusterConfig) -> float:
     if remaining is None:
         return budget
     return min(budget, remaining)
-
-
-# ----- context helpers: temporary until D3 (then version.context_of / version.parse_context) -----
-
-def _merge_clocks(clocks: list[dict[str, int]]) -> dict[str, int]:
-    """Per node, the highest counter."""
-    merged: dict[str, int] = {}
-    for clock in clocks:
-        for node_id, counter in clock.items():
-            merged[node_id] = max(merged.get(node_id, 0), counter)
-    return merged
-
-
-def _encode_context(versions: list[Version]) -> bytes:
-    """The merged clock of ``versions`` (tombstones included) as serialized VectorClock bytes."""
-    merged = _merge_clocks([v.clock for v in versions])
-    return VectorClock(counters=merged).SerializeToString(deterministic=True)
-
-
-def _parse_context(data: bytes) -> dict[str, int]:
-    """A client context back to a clock. Empty bytes = empty clock; bad bytes raise ValueError."""
-    if not data:
-        return {}
-    clock = VectorClock()
-    try:
-        clock.ParseFromString(data)
-    except DecodeError as error:
-        raise ValueError("context is not a vector clock") from error
-    return dict(clock.counters)
 
 
 class Coordinator:
@@ -135,33 +105,37 @@ class Coordinator:
     async def _do_put(self, req: PutRequest, budget: float) -> PutResponse:
         """New clock, local write (1 ack). D5 adds the ReplicaPut fan-out and waiting for W."""
         try:
-            context = _parse_context(req.context)
+            context = parse_context(req.context, self.config.nodes)
         except ValueError:
             return PutResponse(status=INVALID)
         version = await self._write_local(req.key, context, req.value, tombstone=False)
-        return PutResponse(status=OK, context=_encode_context([version]),
+        return PutResponse(status=OK, context=context_of([version]),
                            written_to=[self.node_id])
 
     async def _do_get(self, req: GetRequest, budget: float) -> GetResponse:
-        """Local read: live values plus the merged context. D5 adds ReplicaGet, D7 read repair."""
+        """Local read: live values plus the merged context. D5 adds ReplicaGet, D7 read repair.
+
+        Storage keeps same-value siblings apart (D3), so equal values are sent only once.
+        """
         versions = self.storage.get(req.key)
         live = [v for v in versions if not v.tombstone]
-        context = _encode_context(versions) if versions else b""
+        context = context_of(versions)             # b"" for an unknown key
         if not live:  # unknown key, or only tombstones: still return the context
             return GetResponse(status=NOT_FOUND, context=context, read_from=[self.node_id])
-        return GetResponse(status=OK, values=[v.value for v in live], context=context,
+        values = list(dict.fromkeys(v.value for v in live))   # drop repeats, keep order
+        return GetResponse(status=OK, values=values, context=context,
                            read_from=[self.node_id])
 
     async def _do_delete(self, req: DeleteRequest, budget: float) -> DeleteResponse:
         """A put of a tombstone."""
         try:
-            context = _parse_context(req.context)
+            context = parse_context(req.context, self.config.nodes)
         except ValueError:
             return DeleteResponse(status=INVALID)
         await self._write_local(req.key, context, b"", tombstone=True)
         return DeleteResponse(status=OK)
 
-    async def _write_local(self, key: str, context: dict[str, int], value: bytes,
+    async def _write_local(self, key: str, context: VectorClock, value: bytes,
                            tombstone: bool) -> Version:
         """Build the new version under the key's lock and store it (WAL + fsync)."""
         async with self._key_lock(key):
@@ -170,13 +144,15 @@ class Coordinator:
             await self.storage.apply(key, version)
         return version
 
-    def _new_clock(self, context: dict[str, int], stored: list[Version]) -> dict[str, int]:
+    def _new_clock(self, context: VectorClock, stored: list[Version]) -> VectorClock:
         """The context clock with this node's counter set to
-        max(context[self], highest own counter among the stored versions) + 1  (DEC-02)."""
-        own_stored = max((v.clock.get(self.node_id, 0) for v in stored), default=0)
-        clock = dict(context)
-        clock[self.node_id] = max(context.get(self.node_id, 0), own_stored) + 1
-        return clock
+        max(context[self], highest own counter among the stored versions) + 1  (DEC-02),
+        then pruned to ``vclock_max_entries``. Stored clocks are not merged in: that would
+        drop siblings the client never saw."""
+        own_stored = max((v.clock.counters.get(self.node_id, 0) for v in stored), default=0)
+        counter = max(context.counters.get(self.node_id, 0), own_stored) + 1
+        clock = vclock.advance(context, self.node_id, counter)
+        return vclock.prune(clock, self.node_id, self.config.vclock_max_entries)
 
     async def _forward(self, order: list[str], req: ForwardRequest,
                        budget: float) -> ForwardResponse | None:

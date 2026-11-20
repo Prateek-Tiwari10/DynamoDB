@@ -6,12 +6,20 @@ import pytest
 
 from dynamo import dynamo_pb2
 from dynamo.config import ClusterConfig
-from dynamo.coordinator import Coordinator, _encode_context, _parse_context, request_budget
+from dynamo.coordinator import Coordinator, request_budget
 from dynamo.ring import Ring
-from dynamo.storage import Version
+from dynamo.vclock import VectorClock
+from dynamo.version import Version, context_of, merge_into, parse_context
 
 ONE_NODE = ClusterConfig(nodes={"node1": "localhost:50051"}, n=1, r=1, w=1)
 FIVE_NODES = ClusterConfig(nodes={f"node{i}": f"localhost:5005{i}" for i in range(1, 6)})
+WITH_NODE7 = ClusterConfig(nodes={"node1": "localhost:50051", "node7": "localhost:50057"},
+                           n=1, r=1, w=1)
+KNOWN = {"node1", "node2", "node3", "node7"}
+
+
+def ver(value: bytes, counters: dict[str, int], tombstone: bool = False) -> Version:
+    return Version(value=value, clock=VectorClock(counters=counters), tombstone=tombstone)
 
 
 class FakeStorage:
@@ -24,8 +32,8 @@ class FakeStorage:
         return list(self.data.get(key, []))
 
     async def apply(self, key: str, version: Version) -> bool:
-        self.data[key] = [version]  # newest replaces, like storage before D3
-        return True
+        self.data[key], changed = merge_into(self.data.get(key, []), version)   # same rule as Storage
+        return changed
 
 
 class FakeContext:
@@ -42,7 +50,13 @@ def make_coordinator(config: ClusterConfig = ONE_NODE) -> Coordinator:
 
 
 def clock_of(context: bytes) -> dict[str, int]:
-    return _parse_context(context)
+    return parse_context(context, KNOWN).counters
+
+
+def key_owned_by(coordinator: Coordinator, node_id: str) -> str:
+    """A key whose only replica (N=1) is ``node_id``."""
+    return next(key for key in (f"k{i}" for i in range(1000))
+                if coordinator.ring.preference_list(key, 1) == [node_id])
 
 
 # ---------- time budget ----------
@@ -57,22 +71,6 @@ def test_budget_from_shorter_deadline():
 
 def test_budget_capped_by_request_timeout():
     assert request_budget(FakeContext(30.0), ONE_NODE) == 1.5
-
-
-# ---------- context helpers ----------
-
-def test_context_round_trip_and_merge():
-    versions = [Version(b"a", {"node1": 3, "node2": 1}), Version(b"b", {"node1": 1, "node2": 4})]
-    assert _parse_context(_encode_context(versions)) == {"node1": 3, "node2": 4}
-
-
-def test_empty_context_is_empty_clock():
-    assert _parse_context(b"") == {}
-
-
-def test_bad_context_raises_value_error():
-    with pytest.raises(ValueError):
-        _parse_context(b"\xff\xff\xff")
 
 
 # ---------- single-replica path (N = 1) ----------
@@ -103,10 +101,25 @@ async def test_same_context_different_counters():
 
 
 async def test_context_entries_of_other_nodes_are_kept():
-    context = _encode_context([Version(b"", {"node7": 5})])
+    coordinator = make_coordinator(WITH_NODE7)
+    context = context_of([ver(b"", {"node7": 5})])
+    reply = await coordinator.put(
+        dynamo_pb2.PutRequest(key=key_owned_by(coordinator, "node1"), value=b"v", context=context),
+        1.0)
+    assert clock_of(reply.context) == {"node7": 5, "node1": 1}
+
+
+async def test_put_context_with_unknown_node_invalid():
+    context = context_of([ver(b"", {"node7": 5})])          # node7 is not in ONE_NODE
     reply = await make_coordinator().put(
         dynamo_pb2.PutRequest(key="k", value=b"v", context=context), 1.0)
-    assert clock_of(reply.context) == {"node7": 5, "node1": 1}
+    assert reply.status == dynamo_pb2.INVALID
+
+
+async def test_put_stamps_updated_ms():
+    coordinator = make_coordinator()
+    await coordinator.put(dynamo_pb2.PutRequest(key="k", value=b"v"), 1.0)
+    assert coordinator.storage.data["k"][0].clock.updated_ms["node1"] > 1_700_000_000_000
 
 
 async def test_put_bad_context_invalid():
@@ -153,12 +166,21 @@ async def test_delete_bad_context_invalid():
 
 async def test_get_siblings():
     coordinator = make_coordinator()
-    coordinator.storage.data["k"] = [Version(b"a", {"node1": 2}), Version(b"b", {"node2": 1}),
-                                     Version(b"", {"node3": 4}, tombstone=True)]
+    coordinator.storage.data["k"] = [ver(b"a", {"node1": 2}), ver(b"b", {"node2": 1}),
+                                     ver(b"", {"node3": 4}, tombstone=True)]
     reply = await coordinator.get(dynamo_pb2.GetRequest(key="k"), 1.0)
     assert reply.status == dynamo_pb2.OK
     assert list(reply.values) == [b"a", b"b"]
     assert clock_of(reply.context) == {"node1": 2, "node2": 1, "node3": 4}
+
+
+async def test_get_same_value_siblings_sent_once():
+    coordinator = make_coordinator()
+    coordinator.storage.data["k"] = [ver(b"a", {"node1": 1}), ver(b"b", {"node2": 1}),
+                                     ver(b"a", {"node3": 1})]
+    reply = await coordinator.get(dynamo_pb2.GetRequest(key="k"), 1.0)
+    assert list(reply.values) == [b"a", b"b"]
+    assert clock_of(reply.context) == {"node1": 1, "node2": 1, "node3": 1}
 
 
 async def test_not_replica_unimplemented():

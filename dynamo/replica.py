@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 from dynamo import dynamo_pb2, dynamo_pb2_grpc
 from dynamo.coordinator import request_budget
 from dynamo.reqid import rpc_handler
-from dynamo.storage import Version
+from dynamo.vclock import VectorClock
+from dynamo.version import Version
 
 if TYPE_CHECKING:
     from dynamo.server import Node
@@ -20,7 +21,8 @@ def version_to_proto(version: Version) -> dynamo_pb2.Version:
     """Stored version -> proto message."""
     return dynamo_pb2.Version(
         value=version.value,
-        clock=dynamo_pb2.VectorClock(counters=version.clock),
+        clock=dynamo_pb2.VectorClock(counters=version.clock.counters,
+                                     updated_ms=version.clock.updated_ms),
         tombstone=version.tombstone,
     )
 
@@ -29,7 +31,8 @@ def version_from_proto(message: dynamo_pb2.Version) -> Version:
     """Proto message -> stored version."""
     return Version(
         value=message.value,
-        clock=dict(message.clock.counters),
+        clock=VectorClock(counters=dict(message.clock.counters),
+                          updated_ms=dict(message.clock.updated_ms)),
         tombstone=message.tombstone,
     )
 
