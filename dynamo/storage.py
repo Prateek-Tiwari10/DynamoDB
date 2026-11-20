@@ -13,8 +13,10 @@ import base64
 import json
 import logging
 import os
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from dynamo import vclock
+from dynamo.version import Version, merge_into
 
 if TYPE_CHECKING:
     from dynamo.config import ClusterConfig
@@ -30,20 +32,11 @@ class CorruptLogError(Exception):
     """A broken line was found in the middle of the log (disk corruption, not a crash)."""
 
 
-@dataclass
-class Version:
-    """One stored version of a key."""
-
-    value: bytes = b""                                    # empty for a tombstone
-    clock: dict[str, int] = field(default_factory=dict)   # vector clock, empty until D3
-    tombstone: bool = False                               # True = deleted marker
-
-
 def version_to_json(version: Version) -> dict:
     """Turn a Version into a JSON-friendly dict (the value becomes base64 text)."""
     return {
         "value": base64.b64encode(version.value).decode("ascii"),
-        "clock": version.clock,
+        "clock": vclock.to_json(version.clock),          # {node: [counter, updated_ms]}
         "tombstone": version.tombstone,
     }
 
@@ -52,7 +45,7 @@ def version_from_json(raw: dict) -> Version:
     """Build a Version from the dict made by version_to_json."""
     return Version(
         value=base64.b64decode(raw["value"]),
-        clock=dict(raw["clock"]),
+        clock=vclock.from_json(raw["clock"]),
         tombstone=bool(raw["tombstone"]),
     )
 
@@ -115,21 +108,26 @@ class Storage:
         return list(self._data.get(key, []))
 
     async def apply(self, key: str, version: Version) -> bool:
-        """Store a version (a put, or a tombstone for a delete).
+        """Merge a version (a put, or a tombstone for a delete) into the key's stored set.
 
-        Returns True once the write is on disk and in the dict. If the log cannot be
-        written or fsynced, the node logs CRITICAL and exits at once: there is no retry,
-        because a failed write may have left half a line in the log.
+        Returns True once the changed set is on disk and in the dict. Returns False, with no
+        log line and no fsync, when nothing changes (a duplicate or a stale write, see
+        ``version.merge_into``). If the log cannot be written or fsynced, the node logs
+        CRITICAL and exits at once: there is no retry, because a failed write may have left
+        half a line in the log.
         """
         self._require_loaded()
         line = encode_line(key, version)
         async with self._lock:
+            versions, changed = merge_into(self._data.get(key, []), version)
+            if not changed:
+                return False
             try:
                 await asyncio.to_thread(self._append_to_log, line)
             except OSError:
                 logger.critical("log write failed in %s, exiting", self.data_dir, exc_info=True)
                 os._exit(1)
-            self._store(key, version)
+            self._store(key, versions)
             self._line_count += 1
             if self._line_count >= self.snapshot_every:
                 await asyncio.to_thread(self._snapshot)
@@ -183,7 +181,8 @@ class Storage:
                 os.truncate(self.wal_path, good_bytes)
                 return number - 1
             key, version = parsed
-            self._store(key, version)
+            versions, _ = merge_into(self._data.get(key, []), version)
+            self._store(key, versions)
             good_bytes += len(line)
         return len(lines)
 
@@ -195,9 +194,9 @@ class Storage:
         self._log_file.flush()
         os.fsync(self._log_file.fileno())
 
-    def _store(self, key: str, version: Version) -> None:
-        """Phase 1 rule: the newest write replaces what was there (D3 swaps in reconcile)."""
-        self._data[key] = [version]
+    def _store(self, key: str, versions: list[Version]) -> None:
+        """Put the key's new set of versions (from ``merge_into``) in the dict."""
+        self._data[key] = versions
 
     # -------------------------------------------------------------- snapshot
 
@@ -207,8 +206,8 @@ class Storage:
         An error on the snapshot files is logged and the node keeps running: every write is
         still in the log, so nothing is lost. The log is kept but the line counter is reset,
         so the next try comes after another snapshot_every writes instead of on every write.
-        Replaying the longer log is safe because lines are applied in order and the last one
-        wins. An error while clearing the log exits the node, like a failed log write.
+        Replaying the longer log is safe because merging a version that is already in the set
+        changes nothing. An error while clearing the log exits the node, like a failed log write.
         """
         try:
             self._write_snapshot_tmp()

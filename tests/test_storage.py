@@ -1,6 +1,7 @@
 """Unit tests for dynamo/storage.py. Every test uses its own temp folder as data_dir."""
 
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -11,6 +12,8 @@ import pytest
 
 from dynamo.config import ClusterConfig
 from dynamo.storage import CorruptLogError, Storage, Version, encode_line
+from dynamo.vclock import VectorClock
+from dynamo.version import fingerprint
 
 
 def config(snapshot_every: int = 1000) -> ClusterConfig:
@@ -18,12 +21,26 @@ def config(snapshot_every: int = 1000) -> ClusterConfig:
                          snapshot_every=snapshot_every)
 
 
+_ticks = itertools.count(1)
+
+
+def newer_clock() -> VectorClock:
+    """Each call is one more write coordinated by node1, so it is newer than every earlier one."""
+    tick = next(_ticks)
+    return VectorClock(counters={"node1": tick}, updated_ms={"node1": tick})
+
+
 def put(value: bytes) -> Version:
-    return Version(value=value)
+    return Version(value=value, clock=newer_clock())
 
 
 def tombstone() -> Version:
-    return Version(tombstone=True)
+    return Version(tombstone=True, clock=newer_clock())
+
+
+def sibling(value: bytes, node: str) -> Version:
+    """A write coordinated by ``node`` with no context: concurrent with writes from other nodes."""
+    return Version(value=value, clock=VectorClock(counters={node: 1}, updated_ms={node: 100}))
 
 
 def open_storage(folder, snapshot_every: int = 1000) -> Storage:
@@ -67,8 +84,9 @@ def test_put_get_and_restart(tmp_path):
 def test_delete_stores_tombstone(tmp_path):
     storage = open_storage(tmp_path)
     asyncio.run(storage.apply("a", put(b"1")))
-    asyncio.run(storage.apply("a", tombstone()))
-    assert storage.get("a") == [Version(value=b"", clock={}, tombstone=True)]
+    gone = tombstone()
+    asyncio.run(storage.apply("a", gone))
+    assert storage.get("a") == [gone]                 # the tombstone is newer: the value is dropped
     assert open_storage(tmp_path).get("a")[0].tombstone is True
 
 
@@ -81,13 +99,65 @@ def test_delete_unknown_key(tmp_path):
 
 def test_log_line_format(tmp_path):
     storage = open_storage(tmp_path)
-    asyncio.run(storage.apply("cart:42", put(b"hi")))
+    version = Version(value=b"hi", clock=VectorClock({"node1": 3}, {"node1": 1732090000000}))
+    asyncio.run(storage.apply("cart:42", version))
     assert json.loads(log_lines(tmp_path)[0]) == {
         "op": "put",
         "key": "cart:42",
-        "version": {"value": "aGk=", "clock": {}, "tombstone": False},
+        "version": {"value": "aGk=", "clock": {"node1": [3, 1732090000000]}, "tombstone": False},
         "hint_for": "",
     }
+
+
+def test_duplicate_write_is_not_logged(tmp_path):
+    storage = open_storage(tmp_path)
+    version = put(b"1")
+    assert asyncio.run(storage.apply("a", version)) is True
+    assert asyncio.run(storage.apply("a", version)) is False     # same version again
+    assert len(log_lines(tmp_path)) == 1
+
+
+def test_stale_write_is_not_logged(tmp_path):
+    storage = open_storage(tmp_path)
+    old, new = put(b"old"), put(b"new")
+    asyncio.run(storage.apply("a", new))
+    assert asyncio.run(storage.apply("a", old)) is False         # BEFORE what is stored
+    assert len(log_lines(tmp_path)) == 1
+    assert value_of(storage, "a") == b"new"
+
+
+def test_concurrent_writes_are_kept_as_siblings(tmp_path):
+    storage = open_storage(tmp_path)
+
+    async def run() -> None:
+        await storage.apply("cart", sibling(b"book", "node1"))
+        await storage.apply("cart", sibling(b"pen", "node2"))
+        await storage.apply("cart", Version(tombstone=True,
+                                            clock=VectorClock({"node3": 1}, {"node3": 100})))
+
+    asyncio.run(run())
+    assert len(storage.get("cart")) == 3
+    assert storage.counts() == (1, 0)                 # one live key, with siblings
+
+
+def test_replay_rebuilds_the_same_sibling_sets(tmp_path):
+    storage = open_storage(tmp_path)
+    resolved = Version(value=b"both", clock=VectorClock({"node1": 2, "node2": 1},
+                                                       {"node1": 200, "node2": 100}))
+
+    async def run() -> None:
+        await storage.apply("x", sibling(b"a", "node1"))
+        await storage.apply("x", sibling(b"b", "node2"))
+        await storage.apply("y", sibling(b"a", "node1"))
+        await storage.apply("y", sibling(b"b", "node2"))
+        await storage.apply("y", resolved)                    # client merged the siblings
+
+    asyncio.run(run())
+    again = open_storage(tmp_path)
+    for key in ("x", "y"):
+        assert fingerprint(again.get(key)) == fingerprint(storage.get(key))
+    assert len(again.get("x")) == 2
+    assert again.get("y") == [resolved]
 
 
 def test_close_then_restart(tmp_path):
