@@ -31,6 +31,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Prateek → Meet (2026-11-20):** pushed what `server.py` needs: `config.py` (`ClusterConfig`, `load_config`, `setup_logging`), `membership.py` (`Membership`), `handoff.py` (`Handoff`), `Storage(data_dir, config)`, `cluster.yaml` and `cluster.local.yaml`. You can push `server.py` now.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 - **Meet → Prateek (2026-11-12):** D0-M code pushed (proto with both halves, build files, reqid, ring, cli, coordinator/peers/replica skeleton, Docker). Tests need `make proto` first (generated files are gitignored). `dynamo/server.py` is ready but not pushed, it needs from you: `config.py` (`ClusterConfig`, `load_config`, `setup_logging`), `membership.py` (`Membership`), `handoff.py` (`Handoff`), the `Storage(data_dir, config)` change, and `cluster.yaml` + `cluster.local.yaml` (Docker uses `node1:50051`..`node5:50051`; local uses `localhost:50051`..`50055`). `build_node` passes `<data_dir>/<node_id>` to `Storage`, so the fixture should pass the base folder. Please check your messages in `proto/dynamo/dynamo.proto` (copied from D0-P 4.3).
@@ -58,3 +59,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-20 22:30  Prateek  D1  IMPLEMENTING → REVIEW  (constructor takes config; snapshot error keeps running, clear-log error exits; 30 tests pass)
 - 2026-11-20 22:45  Prateek  D1  REVIEW → IMPLEMENTING  (failed snapshot: retry after another snapshot_every writes, not on the next write)
 - 2026-11-20 22:55  Prateek  D1  IMPLEMENTING → REVIEW  (failed snapshot resets the counter and retries after snapshot_every writes; 5.3 updated)
+- 2026-11-20 23:10  Prateek  notes  REVIEW-LATER.md added: reviews collected there and done after the first full version runs

@@ -99,8 +99,8 @@ If step 1 or 2 fails (an error on the snapshot files), the node logs the error a
 nothing is lost, because the log still holds every write. The log is not cleared, but the counter
 is reset to 0, so the snapshot is tried again only after the next 1000 writes (not on every write,
 which would make each write slow while the disk is full). The log then holds up to 2000 lines;
-replaying it is safe because repeated writes are applied in order and the last one wins. If step 3 fails (an error on the log file),
-the node exits as in 5.1.
+replaying it is safe because repeated writes are applied in order and the last one wins. If step 3
+fails (an error on the log file), the node exits as in 5.1.
 
 ### 5.4 Restart (`load`)
 1. If `snapshot.json` exists, load it into the dict. If not (first start, or fewer than 1000
@@ -118,7 +118,8 @@ the node exits as in 5.1.
 | Broken line left in the file, then a new write | Cannot happen: the file is cut back during restart, so the next line never glues onto a half-line. | `test_append_after_torn_line` |
 | Broken line in the middle of the log | Not a crash but disk corruption. Stop with a clear error instead of guessing. | `test_corrupt_middle_line` |
 | Log write or `fsync` returns an error | Log CRITICAL, exit the process immediately, no retry. Dict untouched, client got no OK. | `test_fsync_failure_exits` |
-| Writing the snapshot fails (disk full, no permission) | Logged as an error, the node keeps running, the write still gets OK. The log is kept and the next write tries again. | `test_snapshot_error_keeps_running` |
+| Writing the snapshot fails (disk full, no permission) | Logged as an error, the node keeps running, the write still gets OK. The log is kept, the counter is reset, and the snapshot is tried again after the next 1000 writes. | `test_snapshot_error_keeps_running` |
+| Restart after a failed snapshot (log longer than 1000 lines, same key written many times) | Replay applies every line in order, so the last write for each key wins. The counter starts above 1000, so the first write snapshots. | `test_replay_long_log_after_failed_snapshot` |
 | Clearing the log after a snapshot fails | An error on the log file: CRITICAL and exit, like a failed log write. | `test_clear_log_error_exits` |
 | Crash after the log `fsync` but before the dict update | The write is in the log, so replay restores it. The client got no OK and may retry; the retry just writes the same value again. | `test_kill_after_fsync` |
 | Crash while writing the temp snapshot | Old `snapshot.json` and full log are untouched. Leftover `.tmp` is deleted on restart. | `test_crash_during_snapshot_tmp` |
@@ -179,6 +180,12 @@ Known limitations we accept:
 8. Q: What limits your write throughput?
    A: One `fsync` per write under one lock. Group commit (one `fsync` for several writes) would
    raise it; we rejected it to keep the design simple.
+9. Q: What if the snapshot cannot be written, for example the disk is full?
+   A: Nothing is lost: every write is already in the log, and the log is only cleared after a
+   snapshot is safely on disk. We log the error, keep serving, and try again after the next 1000
+   writes, so a broken disk does not make every write pay for a failed snapshot. If the disk is
+   really full, the next log write fails too and the node exits rather than ack a write it could
+   not save.
 
 ## 9. As built
 
@@ -208,7 +215,6 @@ What differs from the design, and why:
 - Extra tests not named in section 6: log line format, close then restart, broken last line that
   has a newline, snapshot clears the log.
 - The timing test must point at a real disk: `/tmp` here is tmpfs, where `fsync` costs nothing.
-
 - **The constructor takes the config** (`Storage(data_dir, config)`, D0-P follow-up) and reads
   `config.snapshot_every` from it.
 - **Snapshot errors (2026-11-20, D0-P follow-up), as in 5.3:** an `OSError` while writing the temp
