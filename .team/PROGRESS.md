@@ -13,7 +13,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, confirmed by Meet); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
-| D5 | Coordinator: forwarding + quorum | Meet | IMPLEMENTING | .team/design/D5-coordinator.md | 2026-11-21 | code pushed, 244 tests pass, Phase 2 demo passes locally; Docker demo next |
+| D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
 | D6 | Membership + gossip + failure detector | Prateek | TODO | — | 2026-10-23 | |
 | D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
 | D8 | Sloppy quorum | Meet | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** rest of D0-P (gossip stub, test cluster fixture), then D6
-- **Meet:** D5 implementation (D0-M, D2, D4 in REVIEW)
+- **Meet:** next: D7 read repair + routing (needs D6) or D11 benchmarks (D0-M, D2, D4, D5 in REVIEW)
 
 ## Blockers / questions for the partner
 
@@ -76,3 +76,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 01:40  Meet  D5  TODO → DESIGNING
 - 2026-11-21 02:00  Meet  DEC-11  confirmed
 - 2026-11-21 02:00  Meet  D5  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet)
+- 2026-11-21 19:20  Meet  D5  IMPLEMENTING → REVIEW  (Phase 2 demo passes locally and in Docker)

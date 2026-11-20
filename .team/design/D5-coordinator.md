@@ -1,6 +1,6 @@
 # D5 — Coordinator: forwarding + quorum
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-21
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-21
 
 > Confirmed by Meet on 2026-11-21 as written. No shared file changes. Many answers
 > were already fixed in D0-M (Q1 routing, Q4 errors and time budget, Q10 counter rule, Q11
@@ -196,7 +196,7 @@ def _alive_count(self, pref: list[str]) -> int                              # fo
    simply has no version.
 
 ## 9. As built
-_Built 2026-11-21 as designed. Phase 2 demo passes on the local 5-process cluster; Docker run pending (`make up && DOCKER=1 tools/demo_phase2.sh`)._
+_Built 2026-11-21 as designed. Phase 2 demo passes on the local 5-process cluster and in Docker (`make up && DOCKER=1 tools/demo_phase2.sh`, run by Meet)._
 - `coordinator.py`: `put/get/delete` route with `_route_order` / `_forward`; `coordinate` dispatches the Forward's oneof; the write path shared by Put and Delete is `_write` (parse context → fast fail → `_write_local` → `_replicate`); reads are `_do_get` (local read → `_collect` → `reconcile`). The quorum loop of Q3 is one helper, `_wait_for(tasks, have, needed, deadline)`, used by both `_replicate` and `_collect`. `_replica_put` / `_replica_get` catch `AioRpcError` and return None, so no task ends with an exception; still-running tasks go to `_track` (the set `drain` waits for).
 - New `dynamo/wire.py` with `version_to_proto` / `version_from_proto`, moved out of `replica.py`: the coordinator needs them and `replica.py` already imports the coordinator (import cycle).
 - `_forward` re-raises a gRPC error that is not UNAVAILABLE / DEADLINE_EXCEEDED, so the client gets INTERNAL instead of a hidden failure. A forward that timed out leaves no budget for the next node, so the fallback mainly helps when the first replica is down (UNAVAILABLE comes back at once).
@@ -206,3 +206,5 @@ _Built 2026-11-21 as designed. Phase 2 demo passes on the local 5-process cluste
 - Found by the demo: the CLI crashed on an empty or broken context file. Now an empty file means no contexts and a broken one is reported on stderr and ignored (next save rewrites it).
 - Tests: 27 unit tests in `test_coordinator.py` (quorum loop, fast fail, route order, deadline, single node) and 16 in `test_cluster_requests.py` on 5 real nodes (every routing / quorum / version row of section 6). Suite: 244 passed, 1 skipped.
 - `tools/demo_phase2.sh` (local cluster by default, `DOCKER=1` for Docker): prints `PHASE 2 DEMO PASSED`.
+- Docker findings (measured by Meet): first connection node1 → node4 46 ms (8 ms with `GRPC_DNS_RESOLVER=native`), first `ReplicaPut` 16–27 ms, later ones 2–3 ms, a whole client put 136 ms. The demo's first failed run was a startup race (put sent before node3/node4 listened; refused channels wait the 1 s backoff), so the demo now waits until all 5 nodes answer.
+- **Known limitation until D6:** in Docker a killed container does not refuse connections, its address just goes silent, so calls to it end with DEADLINE_EXCEEDED after the timeout instead of an immediate UNAVAILABLE. Replica calls are fine (W is reached through the others), but a Forward to a killed *first* replica uses up the whole budget before the fallback can run. D6 gossip marks the node SUSPECT/DEAD, and `_route_order` then tries it last.
