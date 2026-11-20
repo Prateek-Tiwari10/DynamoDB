@@ -7,9 +7,9 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
-| D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-12 | design saved (DEC-08, Meet to confirm); INTERFACES.md: all Prateek blocks final |
+| D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-20 | pushed: config.py, membership.py, handoff.py (skeletons), cluster.yaml, cluster.local.yaml; left: vclock, version, gossip stub, conftest fixture |
 | D0-M | Contracts: request path, server wiring, build | Meet | IMPLEMENTING | .team/design/D0-M-contracts.md | 2026-11-12 | all but server.py pushed; server.py waits for D0-P config/membership/handoff |
-| D1 | Storage engine (WAL + snapshot) | Prateek | IMPLEMENTING | .team/design/D1-storage.md | 2026-11-12 | two follow-ups from D0-P: `Storage(data_dir, config)`, snapshot error keeps the node running |
+| D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running); 30 storage tests pass |
 | D2 | Single-node server + CLI | Meet | TODO | — | 2026-10-23 | |
 | D3 | Vector clocks & reconciliation | Prateek | TODO | — | 2026-10-23 | |
 | D4 | Ring + static cluster + Docker | Meet | TODO | — | 2026-10-23 | |
@@ -24,13 +24,14 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D0-P implementation, plus two small D1 follow-ups
+- **Prateek:** D0-P implementation (vclock, version, gossip stub, test fixture)
 - **Meet:** D0-M implementation
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-20):** pushed what `server.py` needs: `config.py` (`ClusterConfig`, `load_config`, `setup_logging`), `membership.py` (`Membership`), `handoff.py` (`Handoff`), `Storage(data_dir, config)`, `cluster.yaml` and `cluster.local.yaml`. You can push `server.py` now.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 - **Meet → Prateek (2026-11-12):** D0-M code pushed (proto with both halves, build files, reqid, ring, cli, coordinator/peers/replica skeleton, Docker). Tests need `make proto` first (generated files are gitignored). `dynamo/server.py` is ready but not pushed, it needs from you: `config.py` (`ClusterConfig`, `load_config`, `setup_logging`), `membership.py` (`Membership`), `handoff.py` (`Handoff`), the `Storage(data_dir, config)` change, and `cluster.yaml` + `cluster.local.yaml` (Docker uses `node1:50051`..`node5:50051`; local uses `localhost:50051`..`50055`). `build_node` passes `<data_dir>/<node_id>` to `Storage`, so the fixture should pass the base folder. Please check your messages in `proto/dynamo/dynamo.proto` (copied from D0-P 4.3).
 
@@ -53,3 +54,5 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-12 11:00  Prateek  D1  REVIEW → IMPLEMENTING  (constructor takes config; snapshot error keeps running)
 - 2026-11-12 12:00  Meet  D0-M  DESIGNING → DESIGNED  (DEC-02 to DEC-08 confirmed; DeliverHint and tombstone purge removed; DEC-09)
 - 2026-11-12 12:20  Meet  D0-M  DESIGNED → IMPLEMENTING
+- 2026-11-20 22:30  Prateek  D0-P  config, membership and handoff skeletons, cluster yamls pushed (unblocks Meet's server.py)
+- 2026-11-20 22:30  Prateek  D1  IMPLEMENTING → REVIEW  (constructor takes config; snapshot error keeps running, clear-log error exits; 30 tests pass)

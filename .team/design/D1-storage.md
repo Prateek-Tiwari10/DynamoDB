@@ -180,8 +180,9 @@ Known limitations we accept:
 
 ## 9. As built
 
-Built 2026-11-11 and updated 2026-11-12 in `dynamo/storage.py`. Tests: `tests/test_storage.py` (23)
-and `tests/test_storage_crash.py` (6). 28 pass; the timing test runs only on request.
+Built 2026-11-11, updated 2026-11-12 and 2026-11-20 in `dynamo/storage.py`. Tests:
+`tests/test_storage.py` (25) and `tests/test_storage_crash.py` (6). 30 pass; the timing test runs
+only on request.
 
 Built as designed: `load / get / apply / counts / close`, one asyncio lock, log `fsync` in a
 thread, snapshot through temp file → `fsync` → rename → clear log, exit with `os._exit(1)` on a log
@@ -206,9 +207,14 @@ What differs from the design, and why:
   has a newline, snapshot clears the log.
 - The timing test must point at a real disk: `/tmp` here is tmpfs, where `fsync` costs nothing.
 
-Open point (not in the design): an error while writing the **snapshot** (not the log) does not exit
-the node. The write is already safe in the log and the dict, the error goes up to the caller, and
-the next write tries the snapshot again.
+- **The constructor takes the config** (`Storage(data_dir, config)`, D0-P follow-up) and reads
+  `config.snapshot_every` from it.
+- **Snapshot errors (2026-11-20, D0-P follow-up), as in 5.3:** an `OSError` while writing the temp
+  file, renaming it, or fsyncing the folder is logged as ERROR and the write still returns True;
+  the log and the counter are kept, so the next write retries. The folder `fsync` is not named in
+  5.3; it is treated like steps 1–2 because the log still holds every write. An `OSError` while
+  clearing the log is CRITICAL and `os._exit(1)`. Tests: `test_snapshot_error_keeps_running`,
+  `test_clear_log_error_exits`.
 
 Not built (as the design says): hints (`hint_for` is always written empty, `put_hint` comes with
 D9), vector-clock reconcile (D3).
