@@ -6,7 +6,6 @@ import grpc
 import pytest
 
 from dynamo import dynamo_pb2
-from dynamo.gossip import gossip_loop
 from conftest import wait_until
 
 
@@ -132,8 +131,3 @@ async def test_wait_until_plain_and_async_conditions():
 async def test_wait_until_times_out():
     with pytest.raises(AssertionError):
         await wait_until(lambda: False, timeout=0.1, interval=0.01)
-
-
-async def test_gossip_loop_is_a_stub():
-    with pytest.raises(NotImplementedError):
-        await gossip_loop(None)

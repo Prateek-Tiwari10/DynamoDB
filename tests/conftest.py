@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 TEST_TIMERS = {
     "gossip_interval_ms": 100,
-    "suspect_after_ms": 300,
+    "suspect_after_ms": 500,
     "dead_after_ms": 1000,
     "rpc_timeout_ms": 200,
     "handoff_retry_ms": 300,
