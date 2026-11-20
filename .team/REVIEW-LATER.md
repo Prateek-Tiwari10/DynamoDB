@@ -20,7 +20,7 @@ of copying what a production system like Dynamo or Cassandra does.
 | 2 | D0-P code: `config.py`, `membership.py`, `handoff.py` skeletons, `cluster*.yaml` | Prateek | Meet | 2026-11-20 | rest of D0-P (vclock, version, gossip stub, test fixture) still being built |
 | 3 | DEC-09 (Meet's half of the interfaces) | Meet | Prateek | 2026-11-20 | from Meet's blocker line of 2026-11-12 |
 | 4 | Prateek's messages in `proto/dynamo/dynamo.proto` (copied by Meet from D0-P 4.3) | Meet | Prateek | 2026-11-20 | checked anyway when `vclock.py` / `version.py` are built |
-| 5 | D0-M code (proto, build, reqid, ring, cli, coordinator/peers/replica, Docker) | Meet | Prateek | 2026-11-20 | |
+| 5 | D0-M code (proto, build, reqid, ring, cli, coordinator/peers/replica, server.py, Docker) | Meet | Prateek | 2026-11-20 | done 2026-11-20; changes from the design in D0-M §9 |
 
 ## Done
 

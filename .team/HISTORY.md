@@ -111,3 +111,14 @@ REVIEW and move to Prateek's next task; Meet's change requests are done later as
 **State left:** D1 = REVIEW. D0-P = DESIGNING with no design doc. D0-M = DESIGNING (Meet).
 
 **Next step:** Prateek designs D0-P (config, logging format, test fixture, gossip proto half), then D3.
+
+## Session 5 — 2026-11-12 to 2026-11-20 · Meet · D0-M designed, built, in REVIEW
+
+**Done:**
+- Confirmed DEC-02 to DEC-08; D0-M doc updated (no `DeliverHint`, no tombstone purge, Prateek's final names); DEC-09 added for Meet's half (Prateek to confirm).
+- Built and pushed D0-M: proto (both halves), `Makefile`, `pyproject.toml`, `requirements.txt`, `.gitignore`, `reqid.py`, `ring.py`, `client/cli.py`, coordinator / peers / replica skeleton, `server.py`, `Dockerfile`, `docker-compose.yml`. 64 new tests; suite: 121 passed, 1 skipped.
+- Checked Prateek's D0-P files against Meet's code: no conflicts.
+
+**State left:** D0-M = REVIEW (REVIEW-LATER #5). D0-P = IMPLEMENTING (Prateek: vclock, version, gossip stub, conftest fixture). D1 = REVIEW.
+
+**Next step:** Meet designs D2 (single-node Put/Get/Delete, Phase 1 demo) and D4 (5-node Docker cluster).

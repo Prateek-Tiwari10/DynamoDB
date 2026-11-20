@@ -1,6 +1,6 @@
 # D0-M — Request path, server wiring & build contracts
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-12
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-20
 
 > The 17 items that touched the SPEC, shared files or Prateek's files were agreed with Prateek as
 > DEC-02 to DEC-07. Prateek's half (D0-P, DEC-08) is used as frozen in `.team/INTERFACES.md`.
@@ -463,7 +463,7 @@ message LocalGetResponse { Status status = 1; repeated Version versions = 2; str
 6. Q: Why must NOT_FOUND still return a context?  A: A deleted key is a tombstone with a clock. If the client doesn't get that clock, its next put is concurrent with the tombstone instead of replacing it.
 
 ## 9. As built
-_In progress (2026-11-12). Pushed: proto, build files, `reqid.py`, `ring.py`, `cli.py`, coordinator / peers / replica skeleton, Docker files, with tests (47 new tests pass). `server.py` is written but not pushed: it imports `config.py`, `membership.py` and `handoff.py` from D0-P._
+_Done 2026-11-20. Everything in section 4 is built and pushed: proto, build files, `reqid.py`, `ring.py`, `cli.py`, coordinator / peers / replica skeleton, `server.py`, Docker files. 64 new tests (`test_reqid`, `test_ring`, `test_cli`, `test_coordinator`, `test_server`); the whole suite passes (121 passed, 1 skipped timing test). Put / Get / Delete / Forward answer UNIMPLEMENTED until D5, Gossip until D6, hinted ReplicaPut until D9. `ClusterInfo`, `Locate`, `LocalGet`, `ReplicaPut` and `ReplicaGet` already work. The in-process 5-node cluster test waits for Prateek's `conftest.py` fixture._
 
 Small changes from the design:
 - `request_budget` lives in `coordinator.py`, not `server.py`: `replica.py` (Forward) needs it too, and `server.py` imports `replica.py`, so keeping it in `server.py` would be an import cycle. Its tests are in `test_coordinator.py`.
@@ -476,3 +476,6 @@ Small changes from the design:
 - Generated `dynamo_pb2*.py` files are not committed (`.gitignore`); `make proto`, `make test` and the Dockerfile generate them.
 - The Dockerfile copies only `proto/`, `dynamo/`, `client/`, `pyproject.toml` and `cluster.yaml`, so no `.dockerignore` is needed.
 - `RequestIdFilter(node_id)` is added to the root log handlers in `serve()`. In the in-process test cluster all nodes share one process, so log lines there carry one node id (tests only).
+- `serve()` installs the SIGTERM / SIGINT handlers **before** `node.start()`. Found by `test_sigterm_stops_node`: with the handlers installed after the startup log line, a SIGTERM in that gap killed the process without a clean stop.
+- `serve()` also turns a yaml syntax error in the config into a clean "cannot load config" exit, not a traceback.
+- Tests run locally on Python 3.14 (the only Python on Meet's laptop); Docker uses 3.11. On 3.14, grpc can crash (segfault) when an aio server that was never started is garbage collected, so `test_build_node_no_io` starts and stops the node after its checks. A real node always starts its server, so the code is not affected.
