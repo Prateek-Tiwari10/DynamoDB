@@ -1,8 +1,9 @@
-# Five nodes from one image. Inside the network every node listens on 50051;
+# Five nodes from one Dockerfile. Inside the network every node listens on 50051;
 # on the host they are 50051-50055. Each node writes only /data/<node_id>/.
+# No shared `image:` name: compose builds the services in parallel, and five builds
+# tagging the same name collide. Each node gets its own tag; the layers are shared.
 x-node: &node
   build: .
-  image: dynamo-kv
   volumes:
     - ./data:/data
   stop_grace_period: 10s
