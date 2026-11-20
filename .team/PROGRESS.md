@@ -12,7 +12,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running, retry after next 1000 writes); 31 storage tests pass |
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
 | D3 | Vector clocks & reconciliation | Prateek | IMPLEMENTING | .team/design/D3-vector-clocks.md | 2026-11-21 | design from Prateek's chat; DEC-11 (Meet to confirm) |
-| D4 | Ring + static cluster + Docker | Meet | DESIGNING | .team/design/D4-static-cluster.md | 2026-11-21 | draft being written |
+| D4 | Ring + static cluster + Docker | Meet | IMPLEMENTING | .team/design/D4-static-cluster.md | 2026-11-21 | design confirmed |
 | D5 | Coordinator: forwarding + quorum | Meet | TODO | — | 2026-10-23 | |
 | D6 | Membership + gossip + failure detector | Prateek | TODO | — | 2026-10-23 | |
 | D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D3 implementation (vclock.py, version.py, storage switch); then rest of D0-P (gossip stub, test fixture)
-- **Meet:** D4 design (D0-M and D2 in REVIEW)
+- **Meet:** D4 implementation (D0-M and D2 in REVIEW)
 
 ## Blockers / questions for the partner
 
@@ -67,3 +67,5 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 00:10  Meet  D2  IMPLEMENTING → REVIEW  (Phase 1 demo passes, 139 tests)
 - 2026-11-21 00:20  Meet  D4  TODO → DESIGNING
 - 2026-11-21 00:00  Prateek  D3  TODO → DESIGNED → IMPLEMENTING  (instructions from Prateek's design chat saved as design doc)
+- 2026-11-21 00:40  Meet  D4  DESIGNING → DESIGNED  (confirmed by Meet)
+- 2026-11-21 00:40  Meet  D4  DESIGNED → IMPLEMENTING
