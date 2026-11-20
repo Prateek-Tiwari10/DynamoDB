@@ -146,3 +146,21 @@ Meet: D0-M, D2, D4 in REVIEW.
 **Next step:** finish D0-P (gossip stub, `tests/conftest.py` cluster fixture, using Meet's
 `server.py` / D4 in-process cluster), then D6 (membership + gossip + failure detector).
 
+## Session 6 — 2026-11-21 · Prateek · D0-P finished
+
+**Done:**
+- `dynamo/gossip.py` stub: `async def gossip_loop(membership) -> None` (logic in D6).
+- Shared test cluster in `tests/conftest.py`: `cluster` (5 nodes) and `make_cluster(k, **overrides)`,
+  short timers, `stop_node` / `kill` / `restart`, `client` / `replica` stubs, `wait_until`.
+  The five open questions are answered in D0-P §9 (killed log closed at teardown; backoff and
+  dead timer both unchanged, peer reconnect measured ~0.45 s; `wait_until` added; port race
+  accepted, start() checks each port answers with its own node id because gRPC uses SO_REUSEPORT;
+  factory fixture tracks every cluster for teardown).
+- `kill` also cancels the node's coordinator tasks (`drain(0)`) so a dead node never writes to a
+  log its restarted copy has opened.
+- 12 harness tests; 256 tests pass. D0-P → REVIEW (REVIEW-LATER #10).
+
+**State left:** D0-P, D1, D3 = REVIEW. Meet: D0-M, D2, D4, D5 in REVIEW; next D7 (needs D6) or D11.
+
+**Next step:** D6 (membership + gossip + failure detector), tested with the new cluster fixture.
+

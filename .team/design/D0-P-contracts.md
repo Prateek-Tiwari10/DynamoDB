@@ -272,4 +272,53 @@ async def cluster(tmp_path) -> Cluster           # 5 nodes by default; `make_clu
 
 ## 9. As built
 
-_Filled after implementation: what changed from this design and why._
+Built 2026-11-21: `dynamo/gossip.py` (stub), `tests/conftest.py`, `tests/test_cluster_harness.py`.
+The rest of D0-P (config, membership, handoff skeletons, yamls) was built 2026-11-20; vclock and
+version were built in D3.
+
+**Test cluster: the five open questions, as decided**
+
+1. **Killed node's log file.** `kill` leaves it open, as a crash would. The fixture remembers every
+   killed Node and calls `storage.close()` on it at teardown, so no file handle leaks between tests.
+   `storage.close()` only closes the file (no snapshot), so this cannot change what the test saw.
+2. **Reconnect backoff (1 s) vs `dead_after_ms` 1000.** Change neither. They do not interact: a
+   restarted node gossips out on its own fresh channels, so the others hear from it at once. The
+   backoff only delays the *peers'* calls to it. Measured: a peer reaches a restarted node in about
+   0.45 s, even after calling it for 1.5 s while it was down. Tests must not expect that instantly;
+   they use `wait_until` (next point) with a 3–5 s timeout.
+3. **`wait_until(condition, timeout=5.0, interval=0.05)`: added.** Condition may be a plain or an
+   async function; raises `AssertionError` on timeout. Available as `cluster.wait_until(...)` and as
+   a function in `conftest.py`. D6–D10 tests poll with it instead of fixed `sleep`s.
+4. **Port race.** Accepted. All k sockets are held open while picking, so the k ports are distinct;
+   another program taking one in the next few ms is very unlikely. No retry, because a retry would
+   not help: gRPC binds with `SO_REUSEPORT` on Linux, so binding a taken port *succeeds silently*
+   and the two servers share it (checked). Instead `Cluster.start()` asks every node `ClusterInfo`
+   and asserts the port is answered by the node that owns it. (Suggestion for Meet in REVIEW-LATER:
+   `grpc.so_reuseport = 0` in `build_node` would make a clash fail loudly in production too.)
+5. **Fixture shape.** `make_cluster` is a factory fixture: `await make_cluster(k, **config_overrides)`.
+   It records each cluster in a list *before* starting it, and its teardown stops every cluster in
+   reverse order, also when the test fails or a start fails half way. `cluster` is just
+   `await make_cluster(5)`. Each cluster gets its own folder `tmp_path/clusterN/` (node ids repeat
+   between clusters). `Cluster.stop()` is safe to call twice and keeps going if one node fails.
+
+**Changes from section 5**
+
+- `kill` also calls `coordinator.drain(0)`, which cancels the node's background tasks at once. Without
+  it, a leftover task of the dead node could append to `wal.log` after the restarted copy has opened
+  the same file. A crash kills those tasks too, so this keeps the crash meaning.
+- `restart` closes the test's client channel to that node and opens a new one, so the test does not
+  wait out a reconnect backoff. Peers' channels are left alone (that is real behaviour).
+- `restart` of a running node raises `RuntimeError`.
+- With fewer than 3 nodes, the fixture shrinks N/R/W (`n = min(3, k)`, `r = w = min(2, n)`).
+- `Cluster` also has `replica(node_id)` (a `NodeService` stub, to call `ReplicaPut` like a peer)
+  and `ports` (id → port).
+- Meet's `tests/test_static_cluster.py` and `tests/test_cluster_requests.py` keep their own local
+  `cluster` fixture (his files); it shadows the shared one in those modules and works as is. He can
+  switch to the shared one when convenient.
+
+**Tests** (`tests/test_cluster_harness.py`, 12): 5 nodes start and answer; stopped node unreachable,
+others answer; kill + restart keeps data and gets a new incarnation; stop + restart keeps data;
+stop closes storage, kill does not; restart of a running node fails; a peer reaches a restarted
+node; two clusters have separate ports and data; small cluster shrinks the quorum; `wait_until`
+(plain, async, timeout); gossip stub raises `NotImplementedError`. 256 tests pass in total
+(5 runs of the harness tests in a row, all green).

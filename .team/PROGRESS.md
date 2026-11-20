@@ -7,7 +7,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 | ID | Task | Owner | Status | Design doc | Updated | Notes |
 |---|---|---|---|---|---|---|
-| D0-P | Contracts: data, membership, test harness | Prateek | IMPLEMENTING | .team/design/D0-P-contracts.md | 2026-11-20 | pushed: config.py, membership.py, handoff.py (skeletons), cluster.yaml, cluster.local.yaml; left: vclock, version, gossip stub, conftest fixture |
+| D0-P | Contracts: data, membership, test harness | Prateek | REVIEW | .team/design/D0-P-contracts.md | 2026-11-21 | all parts in: gossip stub + shared test cluster (`tests/conftest.py`: `cluster`, `make_cluster(k)`, kill/restart, `wait_until`); 256 tests pass; REVIEW-LATER #10 |
 | D0-M | Contracts: request path, server wiring, build | Meet | REVIEW | .team/design/D0-M-contracts.md | 2026-11-20 | all code pushed incl. server.py; 121 tests pass; see REVIEW-LATER #5 |
 | D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running, retry after next 1000 writes); 31 storage tests pass |
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
@@ -24,14 +24,14 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** rest of D0-P (gossip stub, test cluster fixture), then D6
+- **Prateek:** D6 next (D0-P, D1, D3 in REVIEW)
 - **Meet:** next: D7 read repair + routing (needs D6) or D11 benchmarks (D0-M, D2, D4, D5 in REVIEW)
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
-- **Prateek → Meet (2026-11-21):** D3 is in (DEC-11, please confirm). I changed **your** files so main stays green (commit `c70fa57`, Prateek's OK): `coordinator.py` now uses `version.parse_context(req.context, config.nodes)` / `context_of` (your temporary helpers are gone, as DEC-10 planned), `_new_clock` = context → `vclock.advance` → `vclock.prune`, Get sends equal values once; `replica.py` carries `updated_ms` both ways; `tests/test_coordinator.py` updated. The context is now JSON, not the proto bytes (DEC-11 says why). `Storage.apply` returns False for a duplicate/stale write. Old `data/` folders are not readable; delete them. This answers your DEC-10 FYI line, so I removed it.
+- **Prateek → Meet (2026-11-21):** shared test cluster is in `tests/conftest.py` (`cluster` = 5 nodes, `make_cluster(k)`, `kill` / `stop_node` / `restart`, `cluster.wait_until`). Use it for D5/D7/D8 tests. Your `test_static_cluster.py` and `test_cluster_requests.py` still have their own local fixtures; they work as is, switch when convenient. Also found: gRPC binds with `SO_REUSEPORT`, so a second node on a taken port starts *silently* and shares the port; `grpc.aio.server(options=[("grpc.so_reuseport", 0)])` in `build_node` would make that fail loudly (REVIEW-LATER #10, your call).
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 
@@ -77,3 +77,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 02:00  Meet  DEC-11  confirmed
 - 2026-11-21 02:00  Meet  D5  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet)
 - 2026-11-21 19:20  Meet  D5  IMPLEMENTING → REVIEW  (Phase 2 demo passes locally and in Docker)
+- 2026-11-21 00:52  Prateek  D0-P  IMPLEMENTING → REVIEW  (gossip stub, tests/conftest.py cluster fixture, wait_until; 256 tests pass)
