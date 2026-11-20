@@ -49,7 +49,7 @@ Each phase ends with something that runs and can be demoed.
 - `vclock.py`: increment, compare, merge, prune to 10 entries
 - Siblings: store all concurrent versions, `Get` returns all of them plus a context
 - Read repair: after `Get`, push the newest version to stale replicas in the background
-- `gossip.py`: every 1 s exchange membership with one random peer; ALIVE → SUSPECT (3 s) → DEAD (10 s)
+- `gossip.py`: every 1 s exchange membership with one random peer; ALIVE → SUSPECT (5 s) → DEAD (10 s)
 - Coordinator skips DEAD nodes
 - Demo: two clients write the same key with the same old context; `Get` shows two siblings; client merges and writes back. Kill a node and watch others mark it DEAD.
 
@@ -105,7 +105,7 @@ dynamo/
 | `rpc_timeout_ms` | 500 | Wait per replica call |
 | `request_timeout_ms` | 1500 | Total time a node spends on one client request |
 | `gossip_interval_ms` | 1000 | Gossip period |
-| `suspect_after_ms` | 3000 | No heartbeat → SUSPECT |
+| `suspect_after_ms` | 5000 | No heartbeat → SUSPECT (DEC-13) |
 | `dead_after_ms` | 10000 | No heartbeat → DEAD |
 | `handoff_retry_ms` | 5000 | Hint delivery retry period |
 | `vclock_max_entries` | 10 | Prune limit |
@@ -261,7 +261,9 @@ message GossipMessage { string sender = 1; repeated Member members = 2; }
 ```
 
 Gossip merge rule: for each member keep the entry with the higher `incarnation`; if equal, the higher
-`heartbeat`. A node seeing itself marked SUSPECT bumps its own `incarnation` to refute it.
+`heartbeat`. States are each node's own opinion from heartbeat age and are never taken from gossip. A node
+that receives its own row with a strictly greater `(incarnation, heartbeat)` than its own sets its
+`incarnation` to the received one + 1 (refutation, DEC-13).
 All peers start as ALIVE and the timer starts at boot.
 
 | RPC | Phase | Sent by | Sent to |

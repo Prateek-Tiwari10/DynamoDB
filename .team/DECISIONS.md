@@ -90,3 +90,9 @@ Why: the three are one story, how replicas stay in sync when nodes fail: gossip 
 Rejected: keeping Merkle as stretch (the system would have no repair for replicas that drift apart without being read); three separate design docs (the parts share membership state and storage hooks).
 Affects: TASKS (D6, D7/D8/D10 "Needs", order table, stretch list), SPEC (C11, phases), PROGRESS (D6, D9 rows), later proto + `replica.py` (6c).
 
+## DEC-13 — Gossip refutation rule and SUSPECT timeout  (2026-11-21, agreed by Prateek; Meet to confirm, from D6a)
+Decision: (1) a node that receives its own row with a strictly greater `(incarnation, heartbeat)` sets `incarnation = received + 1`; it replaces the SPEC sentence "a node seeing itself marked SUSPECT bumps its own incarnation". (2) `suspect_after_ms` default 3000 → **5000** (`config.py`, `cluster.yaml`, `cluster.local.yaml`; test cluster 300 → 500 ms).
+Why: (1) states are each node's own opinion (never gossiped), so "seeing itself SUSPECT" can never happen; the new rule fixes fast restarts in the same ms and clock jumps. (2) simulation of a healthy 5-node cluster: ~6–7 false SUSPECTs per 1000 ticks at 3 ticks, 0 at 5 ticks; DEAD never fired falsely.
+Rejected: gossiping states (SWIM) — needs rules on who may overrule whom. Persisting the last incarnation to disk — more code; refutation covers the same cases.
+Affects: SPEC (gossip merge rule, settings table, phase-3 text "ALIVE → SUSPECT (3 s)"), `dynamo/config.py`, `cluster.yaml`, `cluster.local.yaml`, INTERFACES config block; D5 unaffected (SUSPECT only reorders routes).
+

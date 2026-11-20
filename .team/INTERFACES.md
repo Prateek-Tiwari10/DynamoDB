@@ -23,7 +23,7 @@ class ClusterConfig:
     rpc_timeout_ms: int = 500
     request_timeout_ms: int = 1500
     gossip_interval_ms: int = 1000
-    suspect_after_ms: int = 3000
+    suspect_after_ms: int = 5000      # DEC-13
     dead_after_ms: int = 10000
     handoff_retry_ms: int = 5000
     vclock_max_entries: int = 10
@@ -133,10 +133,18 @@ class Membership:
     def address(self, node_id: str) -> str
     def on_gossip(self, msg: GossipMessage) -> GossipMessage    # merge the sender's table, reply with ours
     def subscribe(self, callback: Callable[[str, MemberState, MemberState], None]) -> None
-        # called as callback(node_id, old_state, new_state) on every state change
+        # called as callback(node_id, old_state, new_state) on every state change, flaps included;
+        # plain function, called from the gossip loop after the table changed: must be quick and
+        # must not await (start a task for async work); a raising callback is logged, others still run
+    # added in D6a (used by gossip.py and tests):
+    def tick(self) -> None                                    # own heartbeat += 1
+    def table(self) -> GossipMessage                          # sender = self_id, members = members()
+    def merge(self, msg: GossipMessage, now: float) -> None   # newer (incarnation, heartbeat) wins; refutation
+    def check_states(self, now: float) -> None                # ALIVE/SUSPECT/DEAD from local heartbeat age
 
 # gossip.py
-async def gossip_loop(membership: Membership) -> None           # one round every gossip_interval_ms
+async def gossip_loop(membership: Membership) -> None           # one round every gossip_interval_ms (fixed rate)
+async def send_gossip(membership, peer_id: str, msg: GossipMessage) -> GossipMessage   # the one RPC call; tests patch it
 ```
 
 - No `on_contact(sender)`: only gossip updates liveness (DEC-03).

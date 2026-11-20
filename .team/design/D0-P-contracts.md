@@ -205,7 +205,7 @@ class Cluster:
 async def cluster(tmp_path) -> Cluster           # 5 nodes by default; `make_cluster(k)` for other sizes
 ```
 
-- Test timers: gossip 100 ms, suspect 300 ms, dead 1000 ms, rpc timeout 200 ms, handoff retry 300 ms.
+- Test timers: gossip 100 ms, suspect 500 ms (was 300, DEC-13), dead 1000 ms, rpc timeout 200 ms, handoff retry 300 ms.
 
 ## 5. Flow
 

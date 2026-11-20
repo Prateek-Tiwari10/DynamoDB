@@ -14,7 +14,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, confirmed by Meet); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
-| D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | DESIGNING | — | 2026-11-21 | combined from D6 + D9 + S1 (DEC-12); parts built and pushed in order 6a → 6b → 6c |
+| D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | 6a designed and being built (DEC-13, Meet to confirm); 6b, 6c not designed yet |
 | D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
 | D8 | Sloppy quorum | Meet | TODO | — | 2026-10-23 | |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
@@ -24,13 +24,14 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D6 designing (6a gossip first, then 6b hinted handoff, 6c Merkle); D0-P, D1, D3 in REVIEW
+- **Prateek:** D6a gossip implementing; then design 6b, 6c. D0-P, D1, D3 in REVIEW
 - **Meet:** next: D7 read repair + routing (needs D6) or D11 benchmarks (D0-M, D2, D4, D5 in REVIEW)
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-21):** D6a (gossip) designed, see `.team/design/D6-failure-detection.md`. (1) **DEC-13, please confirm:** refutation = own row received with a strictly greater `(incarnation, heartbeat)` → `incarnation = received + 1`; `suspect_after_ms` 3000 → **5000** in `config.py` and both yamls (shared files). (2) `subscribe` contract for D7: plain function `cb(node_id, old, new)`, called from the gossip loop after the table changes, must be quick and must not await (start a task for async work), fires on every change including short SUSPECT flaps. (3) `is_alive` = ALIVE only; SUSPECT can flap briefly on a healthy cluster (rarer with 5 s); your D5 route order already handles it. (4) No change in `replica.py` for 6a. (5) New `Membership` methods: `tick`, `table`, `merge(msg, now)`, `check_states(now)` (INTERFACES).
 - **Prateek → Meet (2026-11-21):** DEC-12, please confirm: D6, D9 and stretch S1 are now one task **D6** (mine): 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy (moved out of stretch into the main plan). I build and push 6a first, so your D7 needs only 6a; your D8 needs the 6b interface (already frozen: `hint_for` in `ReplicaPut`, storage `put_hint` / `hints` / `drop_hint`). 6c will need new RPCs in the proto and handlers in your `replica.py`; we agree the shape when I design 6c.
 - **Prateek → Meet (2026-11-21):** shared test cluster is in `tests/conftest.py` (`cluster` = 5 nodes, `make_cluster(k)`, `kill` / `stop_node` / `restart`, `cluster.wait_until`). Use it for D5/D7/D8 tests. Your `test_static_cluster.py` and `test_cluster_requests.py` still have their own local fixtures; they work as is, switch when convenient. Also found: gRPC binds with `SO_REUSEPORT`, so a second node on a taken port starts *silently* and shares the port; `grpc.aio.server(options=[("grpc.so_reuseport", 0)])` in `build_node` would make that fail loudly (REVIEW-LATER #10, your call).
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
@@ -80,3 +81,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 19:20  Meet  D5  IMPLEMENTING → REVIEW  (Phase 2 demo passes locally and in Docker)
 - 2026-11-21 00:52  Prateek  D0-P  IMPLEMENTING → REVIEW  (gossip stub, tests/conftest.py cluster fixture, wait_until; 256 tests pass)
 - 2026-11-21 00:57  Prateek  D6  TODO → DESIGNING  (D6 + D9 + S1 combined into D6, DEC-12)
+- 2026-11-21 01:21  Prateek  D6  DESIGNING → IMPLEMENTING  (6a designed and saved, DEC-13; 6b and 6c designed later in the same doc)
