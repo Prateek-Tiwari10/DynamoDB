@@ -96,8 +96,10 @@ success for data that was lost. The client gets a connection error; the other re
 3. Clear `wal.log` and `fsync`. Reset the line counter to 0.
 
 If step 1 or 2 fails (an error on the snapshot files), the node logs the error and keeps running:
-nothing is lost, because the log still holds every write. The log is not cleared, the counter is
-not reset, and the next write tries the snapshot again. If step 3 fails (an error on the log file),
+nothing is lost, because the log still holds every write. The log is not cleared, but the counter
+is reset to 0, so the snapshot is tried again only after the next 1000 writes (not on every write,
+which would make each write slow while the disk is full). The log then holds up to 2000 lines;
+replaying it is safe because repeated writes are applied in order and the last one wins. If step 3 fails (an error on the log file),
 the node exits as in 5.1.
 
 ### 5.4 Restart (`load`)
@@ -181,7 +183,7 @@ Known limitations we accept:
 ## 9. As built
 
 Built 2026-11-11, updated 2026-11-12 and 2026-11-20 in `dynamo/storage.py`. Tests:
-`tests/test_storage.py` (25) and `tests/test_storage_crash.py` (6). 30 pass; the timing test runs
+`tests/test_storage.py` (26) and `tests/test_storage_crash.py` (6). 31 pass; the timing test runs
 only on request.
 
 Built as designed: `load / get / apply / counts / close`, one asyncio lock, log `fsync` in a
@@ -211,10 +213,13 @@ What differs from the design, and why:
   `config.snapshot_every` from it.
 - **Snapshot errors (2026-11-20, D0-P follow-up), as in 5.3:** an `OSError` while writing the temp
   file, renaming it, or fsyncing the folder is logged as ERROR and the write still returns True;
-  the log and the counter are kept, so the next write retries. The folder `fsync` is not named in
-  5.3; it is treated like steps 1–2 because the log still holds every write. An `OSError` while
-  clearing the log is CRITICAL and `os._exit(1)`. Tests: `test_snapshot_error_keeps_running`,
-  `test_clear_log_error_exits`.
+  the log is kept and the counter is reset, so the next try is after another `snapshot_every`
+  writes. (First built as "retry on the next write"; changed the same day by Prateek so a full
+  disk does not make every write pay for a failed snapshot, and 5.3 was updated.) The folder
+  `fsync` is not named in 5.3; it is treated like steps 1–2 because the log still holds every
+  write. An `OSError` while clearing the log is CRITICAL and `os._exit(1)`. Tests:
+  `test_snapshot_error_keeps_running`, `test_clear_log_error_exits`,
+  `test_replay_long_log_after_failed_snapshot`.
 
 Not built (as the design says): hints (`hint_for` is always written empty, `put_hint` comes with
 D9), vector-clock reconcile (D3).
