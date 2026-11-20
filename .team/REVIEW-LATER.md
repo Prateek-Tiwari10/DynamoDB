@@ -21,6 +21,7 @@ of copying what a production system like Dynamo or Cassandra does.
 | 3 | DEC-09 (Meet's half of the interfaces) | Meet | Prateek | 2026-11-20 | from Meet's blocker line of 2026-11-12 |
 | 4 | Prateek's messages in `proto/dynamo/dynamo.proto` (copied by Meet from D0-P 4.3) | Meet | Prateek | 2026-11-20 | checked anyway when `vclock.py` / `version.py` are built |
 | 5 | D0-M code (proto, build, reqid, ring, cli, coordinator/peers/replica, server.py, Docker) | Meet | Prateek | 2026-11-20 | done 2026-11-20; changes from the design in D0-M §9 |
+| 6 | D2 single node: coordinator local path, temporary context helpers, `cluster.single.yaml`, `Makefile` CONFIG, demo script, tests | Meet | Prateek | 2026-11-21 | DEC-10; helpers to swap for `version.py` in D3 |
 
 ## Done
 

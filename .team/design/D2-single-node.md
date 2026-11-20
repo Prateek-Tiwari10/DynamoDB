@@ -1,6 +1,6 @@
 # D2 — Single-node server + CLI
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-20
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-20
 
 > Confirmed by Meet on 2026-11-20 as written. The shared-file changes (Q2 helpers, Q5) are DEC-10:
 > Meet's call, Prateek informed, no confirmation needed.
@@ -156,4 +156,10 @@ Version(value: bytes, clock: dict[str, int], tombstone: bool)
    clock; the next put must be newer than it, or it would look concurrent with the delete.
 
 ## 9. As built
-<filled after implementation>
+_Done 2026-11-20, built as designed._
+- `coordinator.py`: `put/get/delete` check `_require_only_replica` (preference list == `[self]`), then `_do_*`. Shared write step `_write_local` builds the clock under the key's lock (`_new_clock`) and calls `storage.apply`. Temporary helpers `_merge_clocks`, `_encode_context` (serialized `VectorClock`, `deterministic=True`) and `_parse_context` (bad bytes → `ValueError` → `INVALID`), to be replaced in D3.
+- `cluster.single.yaml` (node1 on localhost:50051, N=R=W=1); `Makefile` has `CONFIG ?= cluster.local.yaml`.
+- `tools/demo_phase1.sh` runs the demo with a fresh temp data folder and prints `PHASE 1 DEMO PASSED` (checked on Meet's laptop).
+- Tests: `test_coordinator.py` (clock rule, context, get result, siblings with a fake storage, multi-node → UNIMPLEMENTED) and `test_single_node.py` (real node over gRPC, plus `test_phase1_kill9` with a real process and SIGKILL). Whole suite: 139 passed, 1 skipped.
+- Small additions to the design: a test that clock entries of other nodes in the context are kept, and `ClusterInfo` key/tombstone counts checked on a running node.
+- Run the demo: `PYTHON=.venv/bin/python tools/demo_phase1.sh`, or by hand: `make run NODE=node1 CONFIG=cluster.single.yaml`, then `kv put demo:1 hello`, `kill -9`, start again, `kv get demo:1`.
