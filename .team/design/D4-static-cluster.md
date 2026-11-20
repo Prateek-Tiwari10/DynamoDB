@@ -153,4 +153,4 @@ _Done 2026-11-21, built as designed._
 - `tools/cluster_local.sh start|stop|kill|status [NODE...]` and `tools/check_cluster.sh [HOST] [KEY]` added. Checked on Meet's laptop: 5 local processes → `CLUSTER OK` (all nodes: 5 members, ring `e99736f3c5dfcdd1`, `cart:42` → node1, node4, node3); after `kill node3` the check reports node3 unreachable and `CLUSTER NOT OK` while the other nodes still list node3 on the ring (Q1); after `start node3` → `CLUSTER OK` again.
 - `tests/test_static_cluster.py`: 5 in-process nodes agree on members, fingerprint and `Locate`; a restarted node keeps its data. It has its own small fixture; switch to Prateek's `conftest.py` fixture when it exists.
 - Not yet checked: `make up` in Docker, because Docker is not installed on Meet's laptop. Same check: `make up && tools/check_cluster.sh`.
-- Suite: 216 passed, 1 skipped (with Prateek's D3 code).
+- Suite: 213 passed, 1 skipped (with Prateek's D3 code).
