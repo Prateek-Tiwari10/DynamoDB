@@ -1,0 +1,24 @@
+# Local cluster on one machine: node1..node5 on localhost:50051..50055.
+# Used by `make run NODE=nodeX` (CONFIG defaults to cluster.local.yaml).
+# The data folder is not set here: it is <data-dir>/<node_id>/ (--data-dir / DATA_DIR).
+
+nodes:
+  node1: localhost:50051
+  node2: localhost:50052
+  node3: localhost:50053
+  node4: localhost:50054
+  node5: localhost:50055
+
+n: 3                       # copies of each key
+r: 2                       # replies needed for a read
+w: 2                       # acks needed for a write
+vnodes: 32                 # ring positions per node
+rpc_timeout_ms: 500        # wait per replica call
+request_timeout_ms: 1500   # total time a node spends on one client request
+gossip_interval_ms: 1000
+suspect_after_ms: 3000     # no heartbeat progress -> SUSPECT
+dead_after_ms: 10000       # no heartbeat progress -> DEAD
+handoff_retry_ms: 5000
+vclock_max_entries: 10
+snapshot_every: 1000       # log lines between two snapshots
+sloppy_quorum: true
