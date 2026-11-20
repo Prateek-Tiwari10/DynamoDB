@@ -275,7 +275,8 @@ def test_snapshot_clears_log(tmp_path):
 
 
 def test_snapshot_error_keeps_running(tmp_path, monkeypatch, caplog):
-    """Disk full while writing the snapshot: the write still gets OK, the next write retries."""
+    """Disk full while writing the snapshot: the write still gets OK, and the snapshot is tried
+    again only after another snapshot_every writes, with the log kept until then."""
     storage = open_storage(tmp_path, snapshot_every=3)
     real_write = storage._write_snapshot_tmp
 
@@ -291,13 +292,39 @@ def test_snapshot_error_keeps_running(tmp_path, monkeypatch, caplog):
     assert any(record.levelno == logging.ERROR for record in caplog.records)
 
     monkeypatch.setattr(storage, "_write_snapshot_tmp", real_write)
-    write_keys(storage, 1, prefix="next")             # counter not reset: this write retries
+    write_keys(storage, 2, prefix="next")             # counter was reset: no retry yet
+    assert not (tmp_path / "snapshot.json").exists()
+    assert len(log_lines(tmp_path)) == 5              # log keeps growing past the limit
+
+    write_keys(storage, 1, prefix="last")             # 3 writes since the failure: retry
     assert (tmp_path / "snapshot.json").exists()
     assert log_lines(tmp_path) == []
 
     again = open_storage(tmp_path, snapshot_every=3)
     assert value_of(again, "k0") == b"v0"
-    assert value_of(again, "next0") == b"v0"
+    assert value_of(again, "next1") == b"v1"
+    assert value_of(again, "last0") == b"v0"
+
+
+def test_replay_long_log_after_failed_snapshot(tmp_path, monkeypatch):
+    """A log left long by a failed snapshot, with the same key written many times, replays to
+    the last value."""
+    storage = open_storage(tmp_path, snapshot_every=3)
+
+    def broken_write() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage, "_write_snapshot_tmp", broken_write)
+
+    async def run() -> None:
+        for i in range(5):
+            await storage.apply("a", put(f"v{i}".encode()))
+
+    asyncio.run(run())
+    assert len(log_lines(tmp_path)) == 5
+
+    again = open_storage(tmp_path, snapshot_every=3)
+    assert value_of(again, "a") == b"v4"
 
 
 def test_clear_log_error_exits(tmp_path, monkeypatch, caplog):

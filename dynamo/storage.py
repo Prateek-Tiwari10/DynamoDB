@@ -205,17 +205,19 @@ class Storage:
         """Copy the dict to snapshot.json, then clear the log. Lock is held; runs in a thread.
 
         An error on the snapshot files is logged and the node keeps running: every write is
-        still in the log, so nothing is lost. The log and the line counter are kept, so the
-        next write tries the snapshot again. An error while clearing the log exits the node,
-        like a failed log write.
+        still in the log, so nothing is lost. The log is kept but the line counter is reset,
+        so the next try comes after another snapshot_every writes instead of on every write.
+        Replaying the longer log is safe because lines are applied in order and the last one
+        wins. An error while clearing the log exits the node, like a failed log write.
         """
         try:
             self._write_snapshot_tmp()
             os.replace(self.snapshot_tmp_path, self.snapshot_path)   # atomic: old or new, never half
             self._fsync_data_dir()
         except OSError:
-            logger.error("snapshot of %s failed, log kept, next write retries",
-                         self.data_dir, exc_info=True)
+            logger.error("snapshot of %s failed, log kept, retry after %d more writes",
+                         self.data_dir, self.snapshot_every, exc_info=True)
+            self._line_count = 0
             return
         try:
             self._clear_log()
