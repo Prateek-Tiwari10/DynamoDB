@@ -274,6 +274,55 @@ def test_snapshot_clears_log(tmp_path):
     assert value_of(again, "more1") == b"v1"
 
 
+def test_snapshot_error_keeps_running(tmp_path, monkeypatch, caplog):
+    """Disk full while writing the snapshot: the write still gets OK, the next write retries."""
+    storage = open_storage(tmp_path, snapshot_every=3)
+    real_write = storage._write_snapshot_tmp
+
+    def broken_write() -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage, "_write_snapshot_tmp", broken_write)
+    with caplog.at_level(logging.ERROR):
+        write_keys(storage, 3)                        # third write tries the snapshot, fails
+    assert value_of(storage, "k2") == b"v2"           # write acked and in the dict
+    assert not (tmp_path / "snapshot.json").exists()
+    assert len(log_lines(tmp_path)) == 3              # log kept, nothing lost
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+    monkeypatch.setattr(storage, "_write_snapshot_tmp", real_write)
+    write_keys(storage, 1, prefix="next")             # counter not reset: this write retries
+    assert (tmp_path / "snapshot.json").exists()
+    assert log_lines(tmp_path) == []
+
+    again = open_storage(tmp_path, snapshot_every=3)
+    assert value_of(again, "k0") == b"v0"
+    assert value_of(again, "next0") == b"v0"
+
+
+def test_clear_log_error_exits(tmp_path, monkeypatch, caplog):
+    """An error on the log file while clearing it exits the node, like a failed log write."""
+    storage = open_storage(tmp_path, snapshot_every=3)
+    write_keys(storage, 2)
+
+    def broken_clear() -> None:
+        raise OSError("disk error")
+
+    def fake_exit(code):
+        raise NodeExited(code)
+
+    monkeypatch.setattr(storage, "_clear_log", broken_clear)
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    with caplog.at_level(logging.CRITICAL), pytest.raises(NodeExited) as exited:
+        asyncio.run(storage.apply("last", put(b"x")))
+    monkeypatch.undo()
+
+    assert exited.value.args == (1,)
+    assert any(record.levelno == logging.CRITICAL for record in caplog.records)
+    again = open_storage(tmp_path, snapshot_every=3)  # new snapshot + old log replay the same
+    assert value_of(again, "last") == b"x"
+
+
 def slow_snapshot(storage: Storage, monkeypatch) -> tuple[threading.Event, threading.Event]:
     """Make the snapshot wait inside its thread until the test lets it go."""
     started, release = threading.Event(), threading.Event()

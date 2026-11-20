@@ -202,11 +202,26 @@ class Storage:
     # -------------------------------------------------------------- snapshot
 
     def _snapshot(self) -> None:
-        """Copy the dict to snapshot.json, then clear the log. Lock is held; runs in a thread."""
-        self._write_snapshot_tmp()
-        os.replace(self.snapshot_tmp_path, self.snapshot_path)   # atomic: old or new, never half
-        self._fsync_data_dir()
-        self._clear_log()
+        """Copy the dict to snapshot.json, then clear the log. Lock is held; runs in a thread.
+
+        An error on the snapshot files is logged and the node keeps running: every write is
+        still in the log, so nothing is lost. The log and the line counter are kept, so the
+        next write tries the snapshot again. An error while clearing the log exits the node,
+        like a failed log write.
+        """
+        try:
+            self._write_snapshot_tmp()
+            os.replace(self.snapshot_tmp_path, self.snapshot_path)   # atomic: old or new, never half
+            self._fsync_data_dir()
+        except OSError:
+            logger.error("snapshot of %s failed, log kept, next write retries",
+                         self.data_dir, exc_info=True)
+            return
+        try:
+            self._clear_log()
+        except OSError:
+            logger.critical("clearing the log in %s failed, exiting", self.data_dir, exc_info=True)
+            os._exit(1)
         logger.info("snapshot of %s written: %d keys, log cleared", self.data_dir, len(self._data))
 
     def _write_snapshot_tmp(self) -> None:
