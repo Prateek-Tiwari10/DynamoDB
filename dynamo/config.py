@@ -30,7 +30,7 @@ class ClusterConfig:
     rpc_timeout_ms: int = 500
     request_timeout_ms: int = 1500
     gossip_interval_ms: int = 1000
-    suspect_after_ms: int = 3000
+    suspect_after_ms: int = 5000
     dead_after_ms: int = 10000
     handoff_retry_ms: int = 5000
     vclock_max_entries: int = 10

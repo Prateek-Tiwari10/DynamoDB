@@ -16,7 +16,7 @@ vnodes: 32                 # ring positions per node
 rpc_timeout_ms: 500        # wait per replica call
 request_timeout_ms: 1500   # total time a node spends on one client request
 gossip_interval_ms: 1000
-suspect_after_ms: 3000     # no heartbeat progress -> SUSPECT
+suspect_after_ms: 5000     # no heartbeat progress -> SUSPECT
 dead_after_ms: 10000       # no heartbeat progress -> DEAD
 handoff_retry_ms: 5000
 vclock_max_entries: 10
