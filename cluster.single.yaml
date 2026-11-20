@@ -1,0 +1,10 @@
+# One node on localhost:50051 with N = R = W = 1. Used by the Phase 1 demo:
+#   make run NODE=node1 CONFIG=cluster.single.yaml
+# The data folder is not set here: it is <data-dir>/<node_id>/ (--data-dir / DATA_DIR).
+
+nodes:
+  node1: localhost:50051
+
+n: 1
+r: 1
+w: 1

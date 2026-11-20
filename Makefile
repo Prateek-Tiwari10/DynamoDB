@@ -1,4 +1,5 @@
 PYTHON ?= python
+CONFIG ?= cluster.local.yaml
 
 .PHONY: proto test run up down
 
@@ -10,7 +11,7 @@ test:
 
 run:
 	@if [ -z "$(NODE)" ]; then echo "usage: make run NODE=node1"; exit 1; fi
-	NODE_ID=$(NODE) CONFIG=cluster.local.yaml $(PYTHON) -m dynamo.server
+	NODE_ID=$(NODE) CONFIG=$(CONFIG) $(PYTHON) -m dynamo.server
 
 up:
 	docker compose up -d --build
