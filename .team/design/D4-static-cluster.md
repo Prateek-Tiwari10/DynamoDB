@@ -152,5 +152,6 @@ _Done 2026-11-21, built as designed._
 - `ring.py`, `Dockerfile`, `docker-compose.yml` unchanged from D0-M (they already matched Q1–Q5).
 - `tools/cluster_local.sh start|stop|kill|status [NODE...]` and `tools/check_cluster.sh [HOST] [KEY]` added. Checked on Meet's laptop: 5 local processes → `CLUSTER OK` (all nodes: 5 members, ring `e99736f3c5dfcdd1`, `cart:42` → node1, node4, node3); after `kill node3` the check reports node3 unreachable and `CLUSTER NOT OK` while the other nodes still list node3 on the ring (Q1); after `start node3` → `CLUSTER OK` again.
 - `tests/test_static_cluster.py`: 5 in-process nodes agree on members, fingerprint and `Locate`; a restarted node keeps its data. It has its own small fixture; switch to Prateek's `conftest.py` fixture when it exists.
-- Not yet checked: `make up` in Docker, because Docker is not installed on Meet's laptop. Same check: `make up && tools/check_cluster.sh`.
+- Docker checked 2026-11-21 on Meet's laptop (Docker 29.1.3, Compose 2.40.3): `make up` → `tools/check_cluster.sh` → `CLUSTER OK`; `docker compose kill node3` + `start node3` → `CLUSTER OK` again.
+- Fix found by that run: `docker-compose.yml` no longer sets a shared `image: dynamo-kv`. Compose builds the 5 services in parallel and five builds tagging the same name failed with `image ... already exists`; now each node gets its own tag and the layers are shared.
 - Suite: 213 passed, 1 skipped (with Prateek's D3 code).

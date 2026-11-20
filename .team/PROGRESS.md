@@ -12,7 +12,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D1 | Storage engine (WAL + snapshot) | Prateek | REVIEW | .team/design/D1-storage.md | 2026-11-20 | both D0-P follow-ups done (config constructor, snapshot error keeps running, retry after next 1000 writes); 31 storage tests pass |
 | D2 | Single-node server + CLI | Meet | REVIEW | .team/design/D2-single-node.md | 2026-11-20 | Phase 1 demo passes (`tools/demo_phase1.sh`); 139 tests pass; REVIEW-LATER #6 |
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, Meet to confirm); 217 tests pass |
-| D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local 5-node cluster checked (`CLUSTER OK`); Docker `make up` not yet run (no Docker on Meet's laptop); REVIEW-LATER #7 |
+| D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | TODO | — | 2026-10-23 | |
 | D6 | Membership + gossip + failure detector | Prateek | TODO | — | 2026-10-23 | |
 | D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
