@@ -18,10 +18,11 @@ from dynamo.coordinator import Coordinator, request_budget
 from dynamo.handoff import Handoff
 from dynamo.membership import Membership
 from dynamo.peers import Peers
-from dynamo.replica import NodeServiceServicer, version_to_proto
+from dynamo.replica import NodeServiceServicer
 from dynamo.reqid import RequestIdFilter, rpc_handler
 from dynamo.ring import Ring
 from dynamo.storage import Storage
+from dynamo.wire import version_to_proto
 
 logger = logging.getLogger(__name__)
 
