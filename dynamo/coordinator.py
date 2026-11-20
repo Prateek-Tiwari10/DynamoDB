@@ -1,7 +1,8 @@
 """Coordinates client requests: routing, quorum reads and writes.
 
-Routing, the quorum logic and read repair are built in D5, D7 and D8. This file fixes the
-methods the server calls and the background-task handling used at shutdown.
+So far only the single-replica path is built: when this node is the key's only replica (N=1),
+Put / Get / Delete are answered from local storage. Forwarding and the replica fan-out come in
+D5, read repair in D7, sloppy quorum in D8; until then those cases answer UNIMPLEMENTED.
 """
 
 from __future__ import annotations
@@ -11,7 +12,12 @@ import logging
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
+from google.protobuf.message import DecodeError
+
 from dynamo.dynamo_pb2 import (
+    INVALID,
+    NOT_FOUND,
+    OK,
     DeleteRequest,
     DeleteResponse,
     ForwardRequest,
@@ -20,7 +26,9 @@ from dynamo.dynamo_pb2 import (
     GetResponse,
     PutRequest,
     PutResponse,
+    VectorClock,
 )
+from dynamo.storage import Version
 
 if TYPE_CHECKING:
     from dynamo.config import ClusterConfig
@@ -42,6 +50,35 @@ def request_budget(context, config: ClusterConfig) -> float:
     return min(budget, remaining)
 
 
+# ----- context helpers: temporary until D3 (then version.context_of / version.parse_context) -----
+
+def _merge_clocks(clocks: list[dict[str, int]]) -> dict[str, int]:
+    """Per node, the highest counter."""
+    merged: dict[str, int] = {}
+    for clock in clocks:
+        for node_id, counter in clock.items():
+            merged[node_id] = max(merged.get(node_id, 0), counter)
+    return merged
+
+
+def _encode_context(versions: list[Version]) -> bytes:
+    """The merged clock of ``versions`` (tombstones included) as serialized VectorClock bytes."""
+    merged = _merge_clocks([v.clock for v in versions])
+    return VectorClock(counters=merged).SerializeToString(deterministic=True)
+
+
+def _parse_context(data: bytes) -> dict[str, int]:
+    """A client context back to a clock. Empty bytes = empty clock; bad bytes raise ValueError."""
+    if not data:
+        return {}
+    clock = VectorClock()
+    try:
+        clock.ParseFromString(data)
+    except DecodeError as error:
+        raise ValueError("context is not a vector clock") from error
+    return dict(clock.counters)
+
+
 class Coordinator:
     """Entry point for Put, Get and Delete, both from clients and from Forward."""
 
@@ -59,16 +96,24 @@ class Coordinator:
     # ----- client entry: coordinate here or Forward -----
 
     async def put(self, req: PutRequest, budget: float) -> PutResponse:
-        """Route a client Put (D5)."""
-        raise NotImplementedError("put")
+        """Route a client Put. Only the single-replica case is built (D2); forwarding is D5."""
+        self._require_only_replica(req.key)
+        return await self._do_put(req, budget)
 
     async def get(self, req: GetRequest, budget: float) -> GetResponse:
-        """Route a client Get (D5)."""
-        raise NotImplementedError("get")
+        """Route a client Get. Only the single-replica case is built (D2); forwarding is D5."""
+        self._require_only_replica(req.key)
+        return await self._do_get(req, budget)
 
     async def delete(self, req: DeleteRequest, budget: float) -> DeleteResponse:
-        """Route a client Delete (D5)."""
-        raise NotImplementedError("delete")
+        """Route a client Delete. Only the single-replica case is built (D2); forwarding is D5."""
+        self._require_only_replica(req.key)
+        return await self._do_delete(req, budget)
+
+    def _require_only_replica(self, key: str) -> None:
+        """Until D5 this node can only answer keys whose one and only replica it is."""
+        if self.ring.preference_list(key, self.config.n) != [self.node_id]:
+            raise NotImplementedError("requests that need other replicas")
 
     # ----- Forward entry: always coordinates here, never forwards -----
 
@@ -88,16 +133,50 @@ class Coordinator:
     # ----- shared core (D5, D7, D8) -----
 
     async def _do_put(self, req: PutRequest, budget: float) -> PutResponse:
-        """Per-key lock, new clock, local write, ReplicaPut fan-out, wait for W (D5)."""
-        raise NotImplementedError("_do_put")
+        """New clock, local write (1 ack). D5 adds the ReplicaPut fan-out and waiting for W."""
+        try:
+            context = _parse_context(req.context)
+        except ValueError:
+            return PutResponse(status=INVALID)
+        version = await self._write_local(req.key, context, req.value, tombstone=False)
+        return PutResponse(status=OK, context=_encode_context([version]),
+                           written_to=[self.node_id])
 
     async def _do_get(self, req: GetRequest, budget: float) -> GetResponse:
-        """Local read, ReplicaGet fan-out, wait for R, reconcile, schedule repair (D5, D7)."""
-        raise NotImplementedError("_do_get")
+        """Local read: live values plus the merged context. D5 adds ReplicaGet, D7 read repair."""
+        versions = self.storage.get(req.key)
+        live = [v for v in versions if not v.tombstone]
+        context = _encode_context(versions) if versions else b""
+        if not live:  # unknown key, or only tombstones: still return the context
+            return GetResponse(status=NOT_FOUND, context=context, read_from=[self.node_id])
+        return GetResponse(status=OK, values=[v.value for v in live], context=context,
+                           read_from=[self.node_id])
 
     async def _do_delete(self, req: DeleteRequest, budget: float) -> DeleteResponse:
-        """A put of a tombstone (D5)."""
-        raise NotImplementedError("_do_delete")
+        """A put of a tombstone."""
+        try:
+            context = _parse_context(req.context)
+        except ValueError:
+            return DeleteResponse(status=INVALID)
+        await self._write_local(req.key, context, b"", tombstone=True)
+        return DeleteResponse(status=OK)
+
+    async def _write_local(self, key: str, context: dict[str, int], value: bytes,
+                           tombstone: bool) -> Version:
+        """Build the new version under the key's lock and store it (WAL + fsync)."""
+        async with self._key_lock(key):
+            clock = self._new_clock(context, self.storage.get(key))
+            version = Version(value=value, clock=clock, tombstone=tombstone)
+            await self.storage.apply(key, version)
+        return version
+
+    def _new_clock(self, context: dict[str, int], stored: list[Version]) -> dict[str, int]:
+        """The context clock with this node's counter set to
+        max(context[self], highest own counter among the stored versions) + 1  (DEC-02)."""
+        own_stored = max((v.clock.get(self.node_id, 0) for v in stored), default=0)
+        clock = dict(context)
+        clock[self.node_id] = max(context.get(self.node_id, 0), own_stored) + 1
+        return clock
 
     async def _forward(self, order: list[str], req: ForwardRequest,
                        budget: float) -> ForwardResponse | None:
