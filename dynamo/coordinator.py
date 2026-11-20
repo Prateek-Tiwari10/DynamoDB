@@ -1,8 +1,9 @@
 """Coordinates client requests: routing, quorum reads and writes.
 
-So far only the single-replica path is built: when this node is the key's only replica (N=1),
-Put / Get / Delete are answered from local storage. Forwarding and the replica fan-out come in
-D5, read repair in D7, sloppy quorum in D8; until then those cases answer UNIMPLEMENTED.
+Any node can receive a request. Writes are coordinated by the key's first replica (others forward
+to it), reads by any replica. The coordinator handles its own copy first (one answer), asks the
+other replicas in parallel and replies as soon as W (or R) answers are in. Later answers finish in
+the background. Read repair comes in D7, stand-in nodes (sloppy quorum) in D8.
 """
 
 from __future__ import annotations
@@ -12,10 +13,17 @@ import logging
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
+import grpc
+
+from dynamo import reqid, vclock
 from dynamo.dynamo_pb2 import (
+    ALIVE,
+    DEAD,
     INVALID,
     NOT_FOUND,
     OK,
+    QUORUM_FAILED,
+    SUSPECT,
     DeleteRequest,
     DeleteResponse,
     ForwardRequest,
@@ -24,10 +32,12 @@ from dynamo.dynamo_pb2 import (
     GetResponse,
     PutRequest,
     PutResponse,
+    ReplicaGetRequest,
+    ReplicaPutRequest,
 )
-from dynamo import vclock
 from dynamo.vclock import VectorClock
-from dynamo.version import Version, context_of, parse_context
+from dynamo.version import Version, context_of, parse_context, reconcile
+from dynamo.wire import version_from_proto, version_to_proto
 
 if TYPE_CHECKING:
     from dynamo.config import ClusterConfig
@@ -37,6 +47,11 @@ if TYPE_CHECKING:
     from dynamo.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+# The only gRPC codes that mean "the target never answered" (D0-M 3.1).
+RETRY_CODES = {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
+# Route order: ALIVE first, then SUSPECT, then DEAD.
+STATE_RANK = {ALIVE: 0, SUSPECT: 1, DEAD: 2}
 
 
 def request_budget(context, config: ClusterConfig) -> float:
@@ -66,30 +81,42 @@ class Coordinator:
     # ----- client entry: coordinate here or Forward -----
 
     async def put(self, req: PutRequest, budget: float) -> PutResponse:
-        """Route a client Put. Only the single-replica case is built (D2); forwarding is D5."""
-        self._require_only_replica(req.key)
-        return await self._do_put(req, budget)
+        """A client Put: coordinated by the first replica in route order."""
+        order = self._route_order(self._replicas(req.key))
+        if order[0] == self.node_id:
+            return await self._do_put(req, budget)
+        reply = await self._forward(order, ForwardRequest(sender=self.node_id, put=req), budget)
+        return reply.put if reply is not None else PutResponse(status=QUORUM_FAILED)
 
     async def get(self, req: GetRequest, budget: float) -> GetResponse:
-        """Route a client Get. Only the single-replica case is built (D2); forwarding is D5."""
-        self._require_only_replica(req.key)
-        return await self._do_get(req, budget)
+        """A client Get: coordinated by any replica; a non-replica forwards it."""
+        replicas = self._replicas(req.key)
+        if self.node_id in replicas:
+            return await self._do_get(req, budget)
+        order = self._route_order(replicas)
+        reply = await self._forward(order, ForwardRequest(sender=self.node_id, get=req), budget)
+        return reply.get if reply is not None else GetResponse(status=QUORUM_FAILED)
 
     async def delete(self, req: DeleteRequest, budget: float) -> DeleteResponse:
-        """Route a client Delete. Only the single-replica case is built (D2); forwarding is D5."""
-        self._require_only_replica(req.key)
-        return await self._do_delete(req, budget)
-
-    def _require_only_replica(self, key: str) -> None:
-        """Until D5 this node can only answer keys whose one and only replica it is."""
-        if self.ring.preference_list(key, self.config.n) != [self.node_id]:
-            raise NotImplementedError("requests that need other replicas")
+        """A client Delete: coordinated like a Put."""
+        order = self._route_order(self._replicas(req.key))
+        if order[0] == self.node_id:
+            return await self._do_delete(req, budget)
+        reply = await self._forward(order, ForwardRequest(sender=self.node_id, delete=req), budget)
+        return reply.delete if reply is not None else DeleteResponse(status=QUORUM_FAILED)
 
     # ----- Forward entry: always coordinates here, never forwards -----
 
     async def coordinate(self, req: ForwardRequest, budget: float) -> ForwardResponse:
-        """Coordinate a forwarded request on this node (D5)."""
-        raise NotImplementedError("coordinate")
+        """Coordinate a forwarded request on this node, even if this node's ring disagrees."""
+        op = req.WhichOneof("op")
+        if op == "put":
+            return ForwardResponse(put=await self._do_put(req.put, budget))
+        if op == "get":
+            return ForwardResponse(get=await self._do_get(req.get, budget))
+        if op == "delete":
+            return ForwardResponse(delete=await self._do_delete(req.delete, budget))
+        raise ValueError("Forward without a request")
 
     async def drain(self, timeout: float) -> None:
         """Wait up to ``timeout`` seconds for background tasks, then cancel the rest."""
@@ -100,44 +127,63 @@ class Coordinator:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
 
-    # ----- shared core (D5, D7, D8) -----
+    # ----- shared core -----
 
     async def _do_put(self, req: PutRequest, budget: float) -> PutResponse:
-        """New clock, local write (1 ack). D5 adds the ReplicaPut fan-out and waiting for W."""
-        try:
-            context = parse_context(req.context, self.config.nodes)
-        except ValueError:
-            return PutResponse(status=INVALID)
-        version = await self._write_local(req.key, context, req.value, tombstone=False)
-        return PutResponse(status=OK, context=context_of([version]),
-                           written_to=[self.node_id])
-
-    async def _do_get(self, req: GetRequest, budget: float) -> GetResponse:
-        """Local read: live values plus the merged context. D5 adds ReplicaGet, D7 read repair.
-
-        Storage keeps same-value siblings apart (D3), so equal values are sent only once.
-        """
-        versions = self.storage.get(req.key)
-        live = [v for v in versions if not v.tombstone]
-        context = context_of(versions)             # b"" for an unknown key
-        if not live:  # unknown key, or only tombstones: still return the context
-            return GetResponse(status=NOT_FOUND, context=context, read_from=[self.node_id])
-        values = list(dict.fromkeys(v.value for v in live))   # drop repeats, keep order
-        return GetResponse(status=OK, values=values, context=context,
-                           read_from=[self.node_id])
+        """Write locally, then replicate until W acks."""
+        status, version, written = await self._write(req.key, req.context, req.value, False,
+                                                     req.w or self.config.w, budget)
+        context = context_of([version]) if status == OK else b""
+        return PutResponse(status=status, context=context, written_to=written)
 
     async def _do_delete(self, req: DeleteRequest, budget: float) -> DeleteResponse:
         """A put of a tombstone."""
+        status, _, _ = await self._write(req.key, req.context, b"", True,
+                                         req.w or self.config.w, budget)
+        return DeleteResponse(status=status)
+
+    async def _write(self, key: str, raw_context: bytes, value: bytes, tombstone: bool, w: int,
+                     budget: float) -> tuple[int, Version | None, list[str]]:
+        """The write path shared by Put and Delete: (status, version written, nodes that acked)."""
         try:
-            context = parse_context(req.context, self.config.nodes)
+            context = parse_context(raw_context, self.config.nodes)
         except ValueError:
-            return DeleteResponse(status=INVALID)
-        await self._write_local(req.key, context, b"", tombstone=True)
-        return DeleteResponse(status=OK)
+            return INVALID, None, []
+        replicas = self._replicas(key)
+        if self._alive_count(replicas) < w:  # fast fail: W cannot be reached
+            return QUORUM_FAILED, None, []
+        deadline = self._deadline(budget)
+        version = await self._write_local(key, context, value, tombstone)
+        others = [node_id for node_id in replicas if node_id != self.node_id]
+        written = await self._replicate(key, version, others, w, deadline)
+        status = OK if len(written) >= w else QUORUM_FAILED
+        return status, version, written
+
+    async def _do_get(self, req: GetRequest, budget: float) -> GetResponse:
+        """Read locally, then collect replica answers until R, reconcile."""
+        r = req.r or self.config.r
+        replicas = self._replicas(req.key)
+        if self._alive_count(replicas) < r:  # fast fail: R cannot be reached
+            return GetResponse(status=QUORUM_FAILED)
+        deadline = self._deadline(budget)
+        local = self.storage.get(req.key)    # this node's answer counts as one
+        others = [node_id for node_id in replicas if node_id != self.node_id]
+        answers = await self._collect(req.key, others, r, deadline)
+        read_from = [self.node_id] + [node_id for node_id, _ in answers]
+        if len(read_from) < r:
+            return GetResponse(status=QUORUM_FAILED, read_from=read_from)
+
+        versions = reconcile(local + [v for _, found in answers for v in found])
+        live = [v for v in versions if not v.tombstone]
+        context = context_of(versions)       # b"" for an unknown key
+        if not live:  # unknown key, or only tombstones: still return the context
+            return GetResponse(status=NOT_FOUND, context=context, read_from=read_from)
+        values = list(dict.fromkeys(v.value for v in live))   # equal values once (DEC-11)
+        return GetResponse(status=OK, values=values, context=context, read_from=read_from)
 
     async def _write_local(self, key: str, context: VectorClock, value: bytes,
                            tombstone: bool) -> Version:
-        """Build the new version under the key's lock and store it (WAL + fsync)."""
+        """Build the new version under the key's lock and store it (WAL + fsync) = ack 1."""
         async with self._key_lock(key):
             clock = self._new_clock(context, self.storage.get(key))
             version = Version(value=value, clock=clock, tombstone=tombstone)
@@ -154,14 +200,119 @@ class Coordinator:
         clock = vclock.advance(context, self.node_id, counter)
         return vclock.prune(clock, self.node_id, self.config.vclock_max_entries)
 
+    # ----- talking to the other replicas -----
+
+    async def _replicate(self, key: str, version: Version, others: list[str], w: int,
+                         deadline: float) -> list[str]:
+        """Send the version to ``others`` in parallel; the nodes that acked, this node first."""
+        tasks = {asyncio.create_task(self._replica_put(node_id, key, version, deadline)): node_id
+                 for node_id in others}
+        acks = await self._wait_for(tasks, have=1, needed=w, deadline=deadline)
+        return [self.node_id] + [node_id for node_id, _ in acks]
+
+    async def _collect(self, key: str, others: list[str], r: int,
+                       deadline: float) -> list[tuple[str, list[Version]]]:
+        """Ask ``others`` for their versions in parallel; (node, versions) per answer."""
+        tasks = {asyncio.create_task(self._replica_get(node_id, key, deadline)): node_id
+                 for node_id in others}
+        return await self._wait_for(tasks, have=1, needed=r, deadline=deadline)
+
+    async def _wait_for(self, tasks: dict[asyncio.Task, str], have: int, needed: int,
+                        deadline: float) -> list[tuple[str, Any]]:
+        """Wait until ``have`` + successful answers reaches ``needed``, it no longer can, or the
+        deadline passes. A task's result is None for "no answer". Returns (node, result) for each
+        success in arrival order. Tasks still running are left to finish in the background."""
+        successes: list[tuple[str, Any]] = []
+        pending = set(tasks)
+        while have + len(successes) < needed:
+            if have + len(successes) + len(pending) < needed:
+                break                                    # fail early: cannot reach `needed`
+            left = deadline - self._now()
+            if left <= 0:
+                break                                    # budget used up
+            done, pending = await asyncio.wait(pending, timeout=left,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task.result() is not None:
+                    successes.append((tasks[task], task.result()))
+        for task in pending:
+            self._track(task)                            # not cancelled (Q4)
+        return successes
+
+    async def _replica_put(self, node_id: str, key: str, version: Version,
+                           deadline: float) -> bool | None:
+        """One ReplicaPut. True on an ack, None on any failure (never raises)."""
+        timeout = self._rpc_timeout(deadline)
+        if timeout <= 0:
+            return None
+        request = ReplicaPutRequest(sender=self.node_id, key=key, version=version_to_proto(version))
+        try:
+            reply = await self.peers.stub(node_id).ReplicaPut(
+                request, timeout=timeout, metadata=reqid.outgoing())
+        except grpc.aio.AioRpcError as error:
+            logger.warning("ReplicaPut %s to %s failed: %s", key, node_id, error.code().name)
+            return None
+        return True if reply.ok else None
+
+    async def _replica_get(self, node_id: str, key: str, deadline: float) -> list[Version] | None:
+        """One ReplicaGet. The node's versions ([] = not found), None on any failure."""
+        timeout = self._rpc_timeout(deadline)
+        if timeout <= 0:
+            return None
+        request = ReplicaGetRequest(sender=self.node_id, key=key)
+        try:
+            reply = await self.peers.stub(node_id).ReplicaGet(
+                request, timeout=timeout, metadata=reqid.outgoing())
+        except grpc.aio.AioRpcError as error:
+            logger.warning("ReplicaGet %s from %s failed: %s", key, node_id, error.code().name)
+            return None
+        return [version_from_proto(v) for v in reply.versions]
+
     async def _forward(self, order: list[str], req: ForwardRequest,
                        budget: float) -> ForwardResponse | None:
-        """Try each node in order; None when every attempt failed (D5)."""
-        raise NotImplementedError("_forward")
+        """Try each node in order until one coordinates. Reaching this node itself means
+        coordinate here. Moves on only after UNAVAILABLE or DEADLINE_EXCEEDED; any other gRPC
+        error is raised (the client gets INTERNAL). None when every attempt failed."""
+        deadline = self._deadline(budget)
+        for node_id in order:
+            left = deadline - self._now()
+            if left <= 0:
+                break
+            if node_id == self.node_id:
+                return await self.coordinate(req, left)
+            try:
+                return await self.peers.stub(node_id).Forward(
+                    req, timeout=left, metadata=reqid.outgoing())
+            except grpc.aio.AioRpcError as error:
+                if error.code() not in RETRY_CODES:
+                    raise
+                logger.warning("Forward to %s failed (%s), trying the next replica",
+                               node_id, error.code().name)
+        return None
 
-    def _route_order(self, pref: list[str]) -> list[str]:
-        """ALIVE, then SUSPECT, then DEAD, list order inside each (D7)."""
-        raise NotImplementedError("_route_order")
+    # ----- small helpers -----
+
+    def _replicas(self, key: str) -> list[str]:
+        """The key's N replicas (preference list)."""
+        return self.ring.preference_list(key, self.config.n)
+
+    def _route_order(self, replicas: list[str]) -> list[str]:
+        """ALIVE, then SUSPECT, then DEAD; list order inside each (sorted() is stable)."""
+        return sorted(replicas, key=lambda node_id: STATE_RANK.get(self.membership.state(node_id), 2))
+
+    def _alive_count(self, replicas: list[str]) -> int:
+        """How many of the replicas this node believes are ALIVE."""
+        return sum(1 for node_id in replicas if self.membership.state(node_id) == ALIVE)
+
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def _deadline(self, budget: float) -> float:
+        return self._now() + budget
+
+    def _rpc_timeout(self, deadline: float) -> float:
+        """Timeout for one replica call: ``rpc_timeout_ms``, but never past the deadline."""
+        return min(self.config.rpc_timeout_ms / 1000, deadline - self._now())
 
     def _key_lock(self, key: str) -> asyncio.Lock:
         """The lock that serializes clock counters for one key."""
@@ -171,6 +322,9 @@ class Coordinator:
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run ``coro`` in the background and keep track of it until it finishes."""
-        task = asyncio.create_task(coro)
+        self._track(asyncio.create_task(coro))
+
+    def _track(self, task: asyncio.Task) -> None:
+        """Keep a background task in the task set until it finishes (``drain`` waits for it)."""
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)

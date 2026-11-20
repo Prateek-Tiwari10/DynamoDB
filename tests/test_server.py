@@ -141,13 +141,17 @@ async def test_locate_uses_local_ring(running):
     assert reply.position == node.ring.position("cart:42")
 
 
+async def test_put_alone_in_a_five_node_config_fails_quorum(running):
+    # Only node1 runs; the other 4 nodes of the config are unreachable.
+    _, channel, _ = running
+    call = dynamo_pb2_grpc.KVStoreStub(channel).Put(
+        dynamo_pb2.PutRequest(key="k", value=b"v"), metadata=((METADATA_KEY, "id-1"),))
+    assert (await call).status == dynamo_pb2.QUORUM_FAILED
+    assert dict(await call.trailing_metadata())[METADATA_KEY] == "id-1"
+
+
 async def test_stub_rpcs_unimplemented(running):
     _, channel, _ = running
-    kv = dynamo_pb2_grpc.KVStoreStub(channel)
-    with pytest.raises(grpc.aio.AioRpcError) as error:
-        await kv.Put(dynamo_pb2.PutRequest(key="k", value=b"v"), metadata=((METADATA_KEY, "id-1"),))
-    assert error.value.code() == grpc.StatusCode.UNIMPLEMENTED
-    assert dict(error.value.trailing_metadata())[METADATA_KEY] == "id-1"
     with pytest.raises(grpc.aio.AioRpcError) as error:
         await dynamo_pb2_grpc.NodeServiceStub(channel).Gossip(dynamo_pb2.GossipMessage())
     assert error.value.code() == grpc.StatusCode.UNIMPLEMENTED

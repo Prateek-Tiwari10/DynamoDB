@@ -1,6 +1,7 @@
-"""Unit tests for dynamo/coordinator.py: time budget, background tasks, single-replica path."""
+"""Unit tests for dynamo/coordinator.py: time budget, quorum loop, routing, single-replica path."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -36,6 +37,16 @@ class FakeStorage:
         return changed
 
 
+class FakeMembership:
+    """Everyone ALIVE unless a test says otherwise."""
+
+    def __init__(self, states: dict[str, int] | None = None) -> None:
+        self.states = states or {}
+
+    def state(self, node_id: str) -> int:
+        return self.states.get(node_id, dynamo_pb2.ALIVE)
+
+
 class FakeContext:
     def __init__(self, remaining: float | None) -> None:
         self._remaining = remaining
@@ -46,7 +57,7 @@ class FakeContext:
 
 def make_coordinator(config: ClusterConfig = ONE_NODE) -> Coordinator:
     ring = Ring(list(config.nodes), config.vnodes)
-    return Coordinator("node1", config, ring, FakeStorage(), peers=None, membership=None)
+    return Coordinator("node1", config, ring, FakeStorage(), peers=None, membership=FakeMembership())
 
 
 def clock_of(context: bytes) -> dict[str, int]:
@@ -183,14 +194,90 @@ async def test_get_same_value_siblings_sent_once():
     assert clock_of(reply.context) == {"node1": 1, "node2": 1, "node3": 1}
 
 
-async def test_not_replica_unimplemented():
-    coordinator = make_coordinator(FIVE_NODES)  # N = 3: other replicas needed
-    with pytest.raises(NotImplementedError):
-        await coordinator.put(dynamo_pb2.PutRequest(key="k", value=b"v"), 1.0)
-    with pytest.raises(NotImplementedError):
-        await coordinator.get(dynamo_pb2.GetRequest(key="k"), 1.0)
-    with pytest.raises(NotImplementedError):
-        await coordinator.coordinate(dynamo_pb2.ForwardRequest(), 1.0)
+async def test_coordinate_runs_the_forwarded_request_here():
+    coordinator = make_coordinator()
+    reply = await coordinator.coordinate(
+        dynamo_pb2.ForwardRequest(sender="node2", put=dynamo_pb2.PutRequest(key="k", value=b"v")), 1.0)
+    assert reply.put.status == dynamo_pb2.OK
+    assert list(reply.put.written_to) == ["node1"]
+
+
+async def test_coordinate_empty_forward_is_an_error():
+    with pytest.raises(ValueError):
+        await make_coordinator().coordinate(dynamo_pb2.ForwardRequest(), 1.0)
+
+
+# ---------- routing and fast fail ----------
+
+def test_route_order_alive_then_suspect_then_dead():
+    coordinator = make_coordinator(FIVE_NODES)
+    coordinator.membership = FakeMembership({"node2": dynamo_pb2.DEAD, "node3": dynamo_pb2.SUSPECT})
+    assert coordinator._route_order(["node2", "node3", "node4"]) == ["node4", "node3", "node2"]
+    assert coordinator._route_order(["node5", "node4"]) == ["node5", "node4"]   # list order kept
+
+
+async def test_fast_fail_when_not_enough_alive():
+    coordinator = make_coordinator(FIVE_NODES)
+    key = next(k for k in (f"k{i}" for i in range(1000))
+               if coordinator._replicas(k)[0] == "node1")
+    others = coordinator._replicas(key)[1:]
+    coordinator.membership = FakeMembership({node: dynamo_pb2.DEAD for node in others})
+    started = time.monotonic()
+    put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    get = await coordinator.get(dynamo_pb2.GetRequest(key=key), 1.0)
+    assert (put.status, get.status) == (dynamo_pb2.QUORUM_FAILED, dynamo_pb2.QUORUM_FAILED)
+    assert time.monotonic() - started < 0.1      # no waiting for timeouts
+    assert coordinator.storage.data == {}        # nothing written
+
+
+# ---------- the quorum wait loop ----------
+
+async def answer(after: float, result):
+    await asyncio.sleep(after)
+    return result
+
+
+def tasks_for(*answers) -> dict:
+    return {asyncio.create_task(answer(after, result)): f"node{i + 2}"
+            for i, (after, result) in enumerate(answers)}
+
+
+async def test_wait_stops_at_the_quorum_and_keeps_the_rest_running():
+    coordinator = make_coordinator()
+    tasks = tasks_for((0.01, True), (0.3, True))
+    got = await coordinator._wait_for(tasks, have=1, needed=2, deadline=coordinator._deadline(1.0))
+    assert got == [("node2", True)]
+    assert len(coordinator._tasks) == 1          # the slow one runs on in the background
+    await coordinator.drain(1.0)
+    assert all(task.done() and task.result() is True for task in tasks)
+
+
+async def test_wait_fails_early_when_quorum_is_out_of_reach():
+    coordinator = make_coordinator()
+    tasks = tasks_for((0.01, None), (5.0, True))   # one failure, the other is very slow
+    started = time.monotonic()
+    got = await coordinator._wait_for(tasks, have=1, needed=3, deadline=coordinator._deadline(10))
+    assert got == []
+    assert time.monotonic() - started < 0.5       # did not wait for the slow one
+    await coordinator.drain(0)
+
+
+async def test_wait_respects_the_deadline():
+    coordinator = make_coordinator()
+    tasks = tasks_for((5.0, True), (5.0, True))
+    started = time.monotonic()
+    got = await coordinator._wait_for(tasks, have=1, needed=2, deadline=coordinator._deadline(0.2))
+    assert got == []
+    assert 0.15 < time.monotonic() - started < 0.6
+    await coordinator.drain(0)
+
+
+async def test_wait_with_quorum_already_met_returns_at_once():
+    coordinator = make_coordinator()
+    tasks = tasks_for((5.0, True))
+    assert await coordinator._wait_for(tasks, have=1, needed=1,
+                                       deadline=coordinator._deadline(1.0)) == []
+    await coordinator.drain(0)
 
 
 # ---------- background tasks and locks ----------
