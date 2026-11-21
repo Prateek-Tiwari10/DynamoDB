@@ -20,13 +20,13 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
-| D11 | Benchmarks + graphs | Meet | TODO | — | 2026-10-23 | |
+| D11 | Benchmarks + graphs | Meet | DESIGNING | .team/design/D11-benchmarks.md | 2026-11-21 | claimed; design in progress |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
 
 - **Prateek:** D6 (6a + 6c) in REVIEW; next: D10 chaos + cluster tests, then D12 demo runbook; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
-- **Meet:** D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW; next: D11 benchmarks
+- **Meet:** D11 benchmarks DESIGNING; D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
 
 ## Blockers / questions for the partner
 
@@ -100,3 +100,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 20:08  Prateek  D6  6b marked as moved to Meet (DEC-14); 6c next to design
 - 2026-11-21 22:30  Prateek  D6  6c DESIGNED (§11–§21, DEC-15 agreed by Prateek; Meet to confirm), implementing
 - 2026-11-21 22:55  Prateek  D6  IMPLEMENTING → REVIEW  (6c built: merkle.py, antientropy.py, DEC-15; 382 tests pass)
+- 2026-11-21 23:10  Meet  D11  TODO → DESIGNING
