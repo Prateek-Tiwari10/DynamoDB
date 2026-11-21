@@ -4,13 +4,17 @@ Any node can receive a request. Writes are coordinated by the key's first replic
 to it), reads by any replica. The coordinator handles its own copy first (one answer), asks the
 other replicas in parallel and replies as soon as W (or R) answers are in. Later answers finish in
 the background. After a read, replicas that were missing versions are repaired in the
-background (read repair). Replicas this node sees as DEAD are not asked. Stand-in nodes (sloppy
-quorum) come in D8.
+background (read repair). Replicas this node sees as DEAD are not asked.
+
+Sloppy quorum (flag ``sloppy_quorum``): a write does not wait for owners that are not ALIVE. Each
+one is replaced by a stand-in, the next ALIVE node clockwise past the N owners, which keeps the
+write as a hint for that owner and hands it over later (handoff). Reads only ever use the owners.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
@@ -166,12 +170,13 @@ class Coordinator:
         except ValueError:
             return INVALID, None, []
         replicas = self._replicas(key)
-        if self._alive_count(replicas) < w:  # fast fail: W cannot be reached
+        targets = self._targets(key, replicas)
+        stand_ins = sum(1 for _, hint_for in targets if hint_for)
+        if self._alive_count(replicas) + stand_ins < w:  # fast fail: W cannot be reached
             return QUORUM_FAILED, None, []
         deadline = self._deadline(budget)
         version = await self._write_local(key, context, value, tombstone)
-        others = [node_id for node_id in self._reachable(replicas) if node_id != self.node_id]
-        written = await self._replicate(key, version, others, w, deadline)
+        written = await self._replicate(key, version, targets, w, deadline)
         status = OK if len(written) >= w else QUORUM_FAILED
         return status, version, written
 
@@ -219,11 +224,32 @@ class Coordinator:
 
     # ----- talking to the other replicas -----
 
-    async def _replicate(self, key: str, version: Version, others: list[str], w: int,
+    def _targets(self, key: str, replicas: list[str]) -> list[tuple[str, str]]:
+        """Where a write's other copies go, as (node, hint_for); hint_for "" = a real owner.
+
+        Sloppy quorum off: every other owner not seen as DEAD (D7). On: the ALIVE other owners,
+        plus one stand-in for each other owner that is not ALIVE (SUSPECT or DEAD), paired in
+        preference order; fewer stand-ins if not enough nodes are ALIVE."""
+        others = [node_id for node_id in replicas if node_id != self.node_id]
+        if not self.config.sloppy_quorum:
+            return [(node_id, "") for node_id in self._reachable(others)]
+        alive = [node_id for node_id in others if self.membership.state(node_id) == ALIVE]
+        missing = [node_id for node_id in others if node_id not in alive]
+        stand_ins = self._stand_ins(key, replicas, len(missing))
+        return [(node_id, "") for node_id in alive] + list(zip(stand_ins, missing))
+
+    def _stand_ins(self, key: str, replicas: list[str], count: int) -> list[str]:
+        """The first ``count`` ALIVE nodes after the owners, clockwise from the key."""
+        candidates = (node_id for node_id in self.ring.walk(key)
+                      if node_id not in replicas and self.membership.state(node_id) == ALIVE)
+        return list(itertools.islice(candidates, count))
+
+    async def _replicate(self, key: str, version: Version, targets: list[tuple[str, str]], w: int,
                          deadline: float) -> list[str]:
-        """Send the version to ``others`` in parallel; the nodes that acked, this node first."""
-        tasks = {asyncio.create_task(self._replica_put(node_id, key, version, deadline)): node_id
-                 for node_id in others}
+        """Send the version to every (node, hint_for) target in parallel; the nodes that acked,
+        this node first."""
+        tasks = {asyncio.create_task(self._replica_put(node_id, key, version, deadline, hint_for)):
+                 node_id for node_id, hint_for in targets}
         acks, late = await self._wait_for(tasks, have=1, needed=w, deadline=deadline)
         for task in late:
             self._track(task)                            # not cancelled (D5 Q4)
@@ -259,13 +285,15 @@ class Coordinator:
                     successes.append((tasks[task], task.result()))
         return successes, {task: tasks[task] for task in pending}
 
-    async def _replica_put(self, node_id: str, key: str, version: Version,
-                           deadline: float) -> bool | None:
-        """One ReplicaPut. True on an ack, None on any failure (never raises)."""
+    async def _replica_put(self, node_id: str, key: str, version: Version, deadline: float,
+                           hint_for: str = "") -> bool | None:
+        """One ReplicaPut (a hint for ``hint_for`` when set). True on an ack, None on any
+        failure (never raises)."""
         timeout = self._rpc_timeout(deadline)
         if timeout <= 0:
             return None
-        request = ReplicaPutRequest(sender=self.node_id, key=key, version=version_to_proto(version))
+        request = ReplicaPutRequest(sender=self.node_id, key=key, version=version_to_proto(version),
+                                    hint_for=hint_for)
         try:
             reply = await self.peers.stub(node_id).ReplicaPut(
                 request, timeout=timeout, metadata=reqid.outgoing())

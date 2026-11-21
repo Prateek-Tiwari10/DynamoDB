@@ -18,6 +18,7 @@ from dynamo.wire import version_from_proto, version_to_proto
 
 ONE_NODE = ClusterConfig(nodes={"node1": "localhost:50051"}, n=1, r=1, w=1)
 FIVE_NODES = ClusterConfig(nodes={f"node{i}": f"localhost:5005{i}" for i in range(1, 6)})
+FIVE_STRICT = ClusterConfig(nodes=FIVE_NODES.nodes, sloppy_quorum=False)   # D5 / D7 routing
 WITH_NODE7 = ClusterConfig(nodes={"node1": "localhost:50051", "node7": "localhost:50057"},
                            n=1, r=1, w=1)
 KNOWN = {"node1", "node2", "node3", "node7"}
@@ -221,7 +222,7 @@ def test_route_order_alive_then_suspect_then_dead():
 
 
 async def test_fast_fail_when_not_enough_alive():
-    coordinator = make_coordinator(FIVE_NODES)
+    coordinator = make_coordinator(FIVE_STRICT)
     key = next(k for k in (f"k{i}" for i in range(1000))
                if coordinator._replicas(k)[0] == "node1")
     others = coordinator._replicas(key)[1:]
@@ -358,6 +359,10 @@ class FakeStub:
         self.peers.stored[self.node_id], _ = merge_into(stored, version)   # like a real replica
         return dynamo_pb2.ReplicaPutResponse(ok=True, node_id=self.node_id)
 
+    async def Forward(self, request, timeout, metadata):
+        self._check()
+        raise AssertionError("tests only forward to failing nodes")
+
     async def ReplicaGet(self, request, timeout, metadata):
         self._check()
         self.peers.gets.append(self.node_id)
@@ -445,7 +450,7 @@ def test_reachable_skips_only_dead():
 
 
 async def test_get_and_put_skip_a_dead_replica():
-    coordinator = make_coordinator(FIVE_NODES)
+    coordinator = make_coordinator(FIVE_STRICT)
     key = next(k for k in (f"k{i}" for i in range(1000))
                if coordinator._replicas(k)[0] == "node1")
     dead, alive = coordinator._replicas(key)[1:]
@@ -461,7 +466,7 @@ async def test_get_and_put_skip_a_dead_replica():
 
 async def test_fast_fail_counts_only_alive():
     # Meet's D7 Q5 decision: a SUSPECT replica does not count towards W / R.
-    coordinator = make_coordinator(FIVE_NODES)
+    coordinator = make_coordinator(FIVE_STRICT)
     key = next(k for k in (f"k{i}" for i in range(1000))
                if coordinator._replicas(k)[0] == "node1")
     second, third = coordinator._replicas(key)[1:]
@@ -470,3 +475,111 @@ async def test_fast_fail_counts_only_alive():
     put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
     assert put.status == dynamo_pb2.QUORUM_FAILED
     assert coordinator.peers.puts == []
+
+
+# ---------- sloppy quorum (D8) ----------
+
+def owners_and_outsiders(coordinator: Coordinator) -> tuple[str, list[str], list[str]]:
+    """A key whose first owner is node1, its owners, and the other nodes in ring order."""
+    key = next(k for k in (f"k{i}" for i in range(1000))
+               if coordinator._replicas(k)[0] == "node1")
+    owners = coordinator._replicas(key)
+    outsiders = [node for node in coordinator.ring.walk(key) if node not in owners]
+    return key, owners, outsiders
+
+
+def sloppy_coordinator(states: dict[str, int]) -> Coordinator:
+    coordinator = make_coordinator(FIVE_NODES)
+    assert coordinator.config.sloppy_quorum
+    coordinator.membership = FakeMembership(states)
+    coordinator.peers = FakePeers()
+    return coordinator
+
+
+def test_stand_ins_follow_the_ring_and_skip_non_alive():
+    coordinator = sloppy_coordinator({})
+    key, owners, (first_out, second_out) = owners_and_outsiders(coordinator)
+    assert coordinator._stand_ins(key, owners, 1) == [first_out]
+    assert coordinator._stand_ins(key, owners, 2) == [first_out, second_out]
+    coordinator.membership.states[first_out] = dynamo_pb2.SUSPECT
+    assert coordinator._stand_ins(key, owners, 2) == [second_out]     # only as many as are ALIVE
+
+
+def test_one_dead_owner_one_stand_in():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), (first_out, _) = owners_and_outsiders(coordinator)
+    coordinator.membership.states[third] = dynamo_pb2.DEAD
+    assert coordinator._targets(key, coordinator._replicas(key)) == [(second, ""), (first_out, third)]
+
+
+def test_two_dead_owners_two_stand_ins_in_preference_order():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), (first_out, second_out) = owners_and_outsiders(coordinator)
+    coordinator.membership.states.update({second: dynamo_pb2.DEAD, third: dynamo_pb2.DEAD})
+    assert coordinator._targets(key, coordinator._replicas(key)) == [(first_out, second),
+                                                                     (second_out, third)]
+
+
+def test_suspect_owner_gets_a_stand_in():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), (first_out, _) = owners_and_outsiders(coordinator)
+    coordinator.membership.states[second] = dynamo_pb2.SUSPECT
+    assert coordinator._targets(key, coordinator._replicas(key)) == [(third, ""), (first_out, second)]
+
+
+def test_flag_off_keeps_d7_routing():
+    coordinator = make_coordinator(FIVE_STRICT)
+    key, (_, second, third), _ = owners_and_outsiders(coordinator)
+    coordinator.membership = FakeMembership({second: dynamo_pb2.SUSPECT, third: dynamo_pb2.DEAD})
+    assert coordinator._targets(key, coordinator._replicas(key)) == [(second, "")]
+
+
+async def test_sloppy_write_sends_hints_and_counts_them():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), (first_out, second_out) = owners_and_outsiders(coordinator)
+    coordinator.membership.states.update({second: dynamo_pb2.DEAD, third: dynamo_pb2.SUSPECT})
+    sent = []
+    real_put = coordinator._replica_put
+
+    async def spy(node_id, key, version, deadline, hint_for=""):
+        sent.append((node_id, hint_for))
+        return await real_put(node_id, key, version, deadline, hint_for)
+
+    coordinator._replica_put = spy
+    reply = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    await coordinator.drain(1.0)
+    assert reply.status == dynamo_pb2.OK
+    assert reply.written_to[0] == "node1" and set(reply.written_to[1:]) <= {first_out, second_out}
+    assert sorted(sent) == sorted([(first_out, second), (second_out, third)])
+
+
+async def test_fast_fail_counts_stand_ins():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), outsiders = owners_and_outsiders(coordinator)
+    coordinator.membership.states.update({second: dynamo_pb2.DEAD, third: dynamo_pb2.DEAD})
+    coordinator.membership.states.update({node: dynamo_pb2.DEAD for node in outsiders})
+    put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    assert put.status == dynamo_pb2.QUORUM_FAILED              # 1 ALIVE owner, no stand-in
+    assert coordinator.peers.puts == [] and coordinator.storage.data == {}
+
+
+async def test_all_owners_dead_fails():
+    # node1 is not an owner here; all 3 owners are down. Q6: no stand-in coordinates, so the
+    # forward attempts fail and the client gets QUORUM_FAILED, even with sloppy quorum on.
+    coordinator = make_coordinator(FIVE_NODES)
+    key = next(k for k in (f"k{i}" for i in range(1000)) if "node1" not in coordinator._replicas(k))
+    owners = coordinator._replicas(key)
+    coordinator.membership = FakeMembership({node: dynamo_pb2.DEAD for node in owners})
+    coordinator.peers = FakePeers(failing=set(owners))
+    put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    assert put.status == dynamo_pb2.QUORUM_FAILED
+    assert coordinator.peers.puts == [] and coordinator.storage.data == {}
+
+
+async def test_reads_stay_strict():
+    coordinator = sloppy_coordinator({})
+    key, (_, second, third), _ = owners_and_outsiders(coordinator)
+    coordinator.membership.states.update({second: dynamo_pb2.DEAD, third: dynamo_pb2.DEAD})
+    get = await coordinator.get(dynamo_pb2.GetRequest(key=key), 1.0)
+    assert get.status == dynamo_pb2.QUORUM_FAILED
+    assert coordinator.peers.gets == []                        # no stand-in asked
