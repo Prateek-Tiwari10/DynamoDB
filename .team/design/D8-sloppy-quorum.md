@@ -191,4 +191,4 @@ not data; owners get the write back after restart; reads stay strict). Full suit
 **Demos (local cluster):** `tools/demo_sloppy.sh` PASSED (2 owners killed, put OK via node1 +
 stand-in node5, `local-get` on node5 NOT FOUND, R=2 QUORUM FAILED / R=1 book, owners restarted and
 holding `book` within ~1 s of being ALIVE). `demo_phase3.sh` and `demo_phase2.sh` PASSED again.
-Docker runs (`DOCKER=1`) to be done by Meet.
+Docker: `DOCKER=1 tools/demo_phase3.sh` and `DOCKER=1 tools/demo_sloppy.sh` PASSED (Meet, 2026-11-21). First try failed only because the scripts used the system `python` without grpc; the tools now default to `.venv/bin/python` (commit `a07100a`).

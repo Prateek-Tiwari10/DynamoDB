@@ -205,5 +205,7 @@ Phase 3 demo still to do by Meet.
   stand-ins from `ring.walk`, hinted ReplicaPut, fast fail counts stand-ins. 343 passed, 1 skipped.
   `demo_sloppy.sh`, `demo_phase3.sh`, `demo_phase2.sh` pass locally.
 
-**Next step:** Docker runs of the Phase 3 and sloppy demos (Meet); then D11 benchmarks.
+- Docker: Phase 3 and sloppy-quorum demos PASSED. Tools now use `.venv/bin/python` by default.
+
+**Next step:** D11 benchmarks (Meet); reviews of D0-M … D8 by Prateek.
 

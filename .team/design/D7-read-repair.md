@@ -184,7 +184,7 @@ DEAD-skip tests fail.
 **Phase 3 demo (local cluster, 5 processes):** PHASE 3 DEMO PASSED. node1 saw the killed node3 as
 SUSPECT ~5 s and DEAD ~11 s after the kill, ALIVE ~2 s after the restart; node3 held `book`, one
 `get` later it held `pen` (log: `read repair: 1 version(s) of cart:42 to node3`); siblings `x`,
-`y` shown and merged into `xy`. Docker run (`DOCKER=1`) to be done by Meet.
+`y` shown and merged into `xy`. Docker run (`DOCKER=1 tools/demo_phase3.sh`) PASSED too (Meet, 2026-11-21, after the step-2 change from D8 §9).
 
 **Known limits**
 - Right after a restart the coordinator may still see the node as DEAD (until gossip says ALIVE,

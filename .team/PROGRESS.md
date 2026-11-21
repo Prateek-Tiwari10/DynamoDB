@@ -17,7 +17,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | **6a built and pushed** (gossip + failure detector; 292 tests pass; live: SUSPECT ~5 s, DEAD ~10 s); next: design 6b |
 | D7 | Read repair + membership-aware routing | Meet | REVIEW | .team/design/D7-read-repair.md | 2026-11-21 | Phase 3 demo passes locally; 313 tests pass |
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
-| D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally |
+| D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
 | D11 | Benchmarks + graphs | Meet | TODO | — | 2026-10-23 | |
@@ -98,3 +98,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 12:03  Meet  D8  TODO → DESIGNING
 - 2026-11-21 12:10  Meet  D8  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet)
 - 2026-11-21 12:20  Meet  D8  IMPLEMENTING → REVIEW  (stand-ins, demo_sloppy.sh; 343 tests pass)
+- 2026-11-21 12:26  Meet  D7, D8  Docker demos passed (demo_phase3.sh, demo_sloppy.sh)
