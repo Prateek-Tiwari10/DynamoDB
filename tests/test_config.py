@@ -34,6 +34,16 @@ def test_repo_config_files(name, host):
     assert config == ClusterConfig(nodes=config.nodes)        # every other value is the default
 
 
+@pytest.mark.parametrize("name, base", [("cluster.nosloppy.yaml", "cluster.yaml"),
+                                        ("cluster.local.nosloppy.yaml", "cluster.local.yaml")])
+def test_nosloppy_config_files(name, base):
+    """The strict-quorum configs (cluster tests) differ from their base only in sloppy_quorum."""
+    strict = load_config(os.path.join(REPO_ROOT, name))
+    normal = load_config(os.path.join(REPO_ROOT, base))
+    assert strict.sloppy_quorum is False
+    assert strict == dataclasses.replace(normal, sloppy_quorum=False)
+
+
 def test_defaults_when_only_nodes_given(tmp_path):
     config = load_config(write(tmp_path, NODES))
     assert (config.n, config.r, config.w, config.snapshot_every) == (3, 2, 2, 1000)

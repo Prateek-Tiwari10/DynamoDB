@@ -13,3 +13,7 @@ dynamo/dynamo_pb2_grpc.py
 # runtime data
 data/
 .kv_context.json
+
+# real-cluster tests and chaos runs (tests/cluster, tools/chaos.py)
+data-cluster/
+results/*.writes.jsonl

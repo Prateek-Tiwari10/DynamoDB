@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the 5-node cluster as local processes, without Docker.
-# Uses cluster.local.yaml (node1..node5 on localhost:50051..50055).
+# Uses $CONFIG, default cluster.local.yaml (node1..node5 on localhost:50051..50055).
 #
 #   tools/cluster_local.sh start [NODE...]   start all nodes, or only the ones named
 #   tools/cluster_local.sh stop  [NODE...]   clean stop (SIGTERM)
@@ -33,7 +33,7 @@ start_node() {
         echo "$1 already running (pid $(pid_of "$1"))"
         return
     fi
-    NODE_ID="$1" CONFIG=cluster.local.yaml DATA_DIR="$DATA" PYTHONUNBUFFERED=1 \
+    NODE_ID="$1" CONFIG="${CONFIG:-cluster.local.yaml}" DATA_DIR="$DATA" PYTHONUNBUFFERED=1 \
         "$PY" -m dynamo.server >>"$DATA/$1.log" 2>&1 &
     echo $! >"$DATA/$1.pid"
     echo "$1 started (pid $!, log $DATA/$1.log)"

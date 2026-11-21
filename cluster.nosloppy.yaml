@@ -1,0 +1,27 @@
+# Same as cluster.yaml, but with sloppy quorum off (strict quorum).
+# Used with docker-compose.nosloppy.yml by the cluster tests (tests/cluster).
+# Docker cluster: every node listens on 50051 inside its container and is reached
+# by its service name. Used by docker-compose (CONFIG=cluster.yaml).
+# The data folder is not set here: it is <data-dir>/<node_id>/ (--data-dir / DATA_DIR).
+
+nodes:
+  node1: node1:50051
+  node2: node2:50051
+  node3: node3:50051
+  node4: node4:50051
+  node5: node5:50051
+
+n: 3                       # copies of each key
+r: 2                       # replies needed for a read
+w: 2                       # acks needed for a write
+vnodes: 32                 # ring positions per node
+rpc_timeout_ms: 500        # wait per replica call
+request_timeout_ms: 1500   # total time a node spends on one client request
+gossip_interval_ms: 1000
+suspect_after_ms: 5000     # no heartbeat progress -> SUSPECT
+dead_after_ms: 10000       # no heartbeat progress -> DEAD
+handoff_retry_ms: 5000
+anti_entropy_ms: 10000     # Merkle sync with one partner
+vclock_max_entries: 10
+snapshot_every: 1000       # log lines between two snapshots
+sloppy_quorum: false

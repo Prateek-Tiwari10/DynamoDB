@@ -1,0 +1,15 @@
+# Override for strict-quorum runs: every node reads cluster.nosloppy.yaml (sloppy_quorum: false).
+#   docker compose -f docker-compose.yml -f docker-compose.nosloppy.yml up -d
+# Compose merges environment and volumes with docker-compose.yml, so NODE_ID and ./data stay.
+x-nosloppy: &nosloppy
+  environment:
+    CONFIG: cluster.nosloppy.yaml
+  volumes:
+    - ./cluster.nosloppy.yaml:/app/cluster.nosloppy.yaml:ro
+
+services:
+  node1: *nosloppy
+  node2: *nosloppy
+  node3: *nosloppy
+  node4: *nosloppy
+  node5: *nosloppy
