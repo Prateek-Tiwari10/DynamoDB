@@ -194,12 +194,24 @@ async def test_replica_put_then_get_and_local_get(running):
     assert [v.value for v in local.versions] == [b"book"]
 
 
-async def test_hinted_replica_put_unimplemented(running):
-    _, channel, _ = running
-    with pytest.raises(grpc.aio.AioRpcError) as error:
-        await dynamo_pb2_grpc.NodeServiceStub(channel).ReplicaPut(
-            dynamo_pb2.ReplicaPutRequest(key="k", version=dynamo_pb2.Version(), hint_for="node2"))
-    assert error.value.code() == grpc.StatusCode.UNIMPLEMENTED
+async def test_hinted_replica_put_is_kept_as_a_hint(running):
+    node, channel, _ = running
+    version = dynamo_pb2.Version(value=b"held", clock=dynamo_pb2.VectorClock(counters={"node3": 1}))
+    reply = await dynamo_pb2_grpc.NodeServiceStub(channel).ReplicaPut(
+        dynamo_pb2.ReplicaPutRequest(sender="node3", key="k", version=version, hint_for="node2"))
+    assert reply.ok
+    assert [(key, v.value) for key, v in node.storage.hints()["node2"]] == [("k", b"held")]
+    local = await dynamo_pb2_grpc.KVStoreStub(channel).LocalGet(dynamo_pb2.LocalGetRequest(key="k"))
+    assert local.status == dynamo_pb2.NOT_FOUND                 # a hint is not this node's data
+
+
+async def test_hint_for_self_is_a_normal_write(running):
+    node, channel, _ = running
+    version = dynamo_pb2.Version(value=b"mine", clock=dynamo_pb2.VectorClock(counters={"node3": 1}))
+    await dynamo_pb2_grpc.NodeServiceStub(channel).ReplicaPut(
+        dynamo_pb2.ReplicaPutRequest(sender="node3", key="k", version=version, hint_for="node1"))
+    assert node.storage.hints() == {}
+    assert [v.value for v in node.storage.get("k")] == [b"mine"]
 
 
 async def test_restart_keeps_data(tmp_path):

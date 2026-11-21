@@ -30,10 +30,14 @@ class NodeServiceServicer(dynamo_pb2_grpc.NodeServiceServicer):
 
     @rpc_handler("node")
     async def ReplicaPut(self, request, context):
-        """Store one version. A dominated version is acknowledged but not stored."""
-        if request.hint_for:
-            raise NotImplementedError("hinted writes")  # D9: storage.put_hint
-        await self._node.storage.apply(request.key, version_from_proto(request.version))
+        """Store one version. A dominated version is acknowledged but not stored.
+        With ``hint_for`` set (and not this node) the version is kept as a hint for that node,
+        to be handed back when it is ALIVE again (D6b)."""
+        version = version_from_proto(request.version)
+        if request.hint_for and request.hint_for != self._node.node_id:
+            await self._node.storage.put_hint(request.hint_for, request.key, version)
+        else:
+            await self._node.storage.apply(request.key, version)
         return dynamo_pb2.ReplicaPutResponse(ok=True, node_id=self._node.node_id)
 
     @rpc_handler("node")
