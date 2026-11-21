@@ -245,4 +245,51 @@ No DEC needed unless Meet objects (no proto/config-key/SPEC change); add the lin
 
 ## 12. As built
 
-_(filled after implementation)_
+Built 2026-11-21/22. Commits `97992a5` (shared: no-sloppy yamls, compose override, `CONFIG` in
+`cluster_local.sh`, `make cluster-test` / `make chaos`, `.gitignore`, config test), `44004e4`
+(`tools/cluster_control.py`, `tools/chaos.py`), `3844da8` (`tests/cluster/`), `5ff55b0` (reports).
+Venv: Python 3.12.15 (see the note at the top). `make test`: 402 passed, 10 skipped (the 9 cluster
+tests are skipped without `RUN_CLUSTER=1`).
+
+**Result (local target):** `make cluster-test` → **9 passed in 7 min 6 s** (incl. the 5-minute chaos).
+- Test 7 measured: SUSPECT seen by the 4 others after 5.1–6.6 s, DEAD after 10.1–11.5 s; after the
+  restart ALIVE in every view after 2.0 s.
+- Chaos `results/chaos-20261121-2355` (the `make cluster-test` run): seed 83779, 321 s, 15 faults (crash
+  11, stop 3, pause 1), max 1 node down; 31,423 writes, 31,146 ok, 6 failed, 271 unknown (99.1 %);
+  final check 15,818 present + 15,328 superseded, **LOST 0**; last acked write accounted for on every
+  key; 0 unknown values; converged 21.6 s after the last fault (15,965 keys, all owners identical).
+- Chaos `results/chaos-20261121-2346` (the run before): seed 48605, 16 faults (crash 8, stop 6, pause
+  2), 30,527 acked, **LOST 0**, converged after 25.9 s.
+- Docker target: written, **not run** (Docker is not installed on Prateek's laptop) — Meet to run
+  `CLUSTER_TARGET=docker make cluster-test` once (§11).
+
+Built as designed: T1–T8, C1 (with the §6 chain rule), C2–C5, the 9 tests of §5, the report of §8,
+the shared changes of §9 (`make chaos` runs `python -m tools.chaos`, see below).
+
+What differs, and why:
+- **`RealCluster` and both backends live in `tools/cluster_control.py`**, not in
+  `tests/cluster/conftest.py`: `tools/chaos.py` needs the same kill/start/wait code, so it exists once.
+  The conftest only has the fixtures (`cluster` session, `healthy` autouse, `strict`, `fresh`).
+- **`tests/cluster/` is a package** (`__init__.py`, helpers in `tests/cluster/helpers.py`): without it its
+  `conftest.py` shadowed the root one for `from conftest import wait_until` in `test_cluster_harness.py`.
+- **Session event loop:** every cluster test gets `pytest.mark.asyncio(loop_scope="session")` in the skip
+  hook, inserted with `append=False` (in front of the marker `asyncio_mode=auto` adds) — the cluster's
+  gRPC channels belong to the session loop.
+- **`ensure(config, wipe=True)`** replaces a separate wipe call; **`start(node)` waits until the node
+  answers** (found: tests 4/6 called a node that was not listening yet → UNAVAILABLE).
+- **Local pause:** `kill`/`stop`/`stop_all` send SIGCONT first (a frozen process ignores SIGTERM until it runs).
+- **`make chaos` = `python -m tools.chaos`** (the script imports `tools.cluster_control`, like Meet's bench).
+- **Chaos clients send to nodes that are up** (not crashed/stopped; a frozen node counts as up): like a
+  client with a health-checked node list. In-flight requests to a node that dies still fail → `unknown`.
+  Mix: 40 % write-once, 40 % overwrite, 20 % plain Get; 50 ms between two requests of a client; ~100 ops/s.
+  An overwrite whose Get fails is skipped (no context to write with).
+- **Final check also counts unreadable keys** (Get r=3 failed 3 times) → fails the run; 0 in both runs.
+- **Test 6:** waits until `c` has v1 before the crash (otherwise "stale" could mean "never had it"); checks
+  the precondition after "a sees c ALIVE", right before the Get; and **reads up to 3 times**. Found in the
+  first full run: just after `c`'s restart, `a`'s own channel to `c` can still be in gRPC reconnect backoff
+  (≤ 1 s, `peers.py`) although gossip already shows `c` ALIVE; the read then gets R=2 from a and b, `c`
+  never answers, so read repair skips it (log: `ReplicaGet t6-… from node2 failed: UNAVAILABLE`).
+  Correct best-effort behaviour (anti-entropy fixes it later) → REVIEW-LATER for D7.
+- **Test 2** writes with the context of its previous Put, so the values form one chain (writes without
+  context through a different coordinator would be siblings, and "Get returns the value just written"
+  would not hold).

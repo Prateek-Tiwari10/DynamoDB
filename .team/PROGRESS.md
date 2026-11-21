@@ -19,19 +19,20 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
-| D10 | Chaos + cluster test suite | Prateek | IMPLEMENTING | .team/design/D10-chaos-cluster-tests.md | 2026-11-21 | 9 tests on the real cluster (local processes or Docker) + 5-min chaos with no-loss proof; venv now Python 3.12 |
+| D10 | Chaos + cluster test suite | Prateek | REVIEW | .team/design/D10-chaos-cluster-tests.md | 2026-11-22 | `make cluster-test` 9/9 green on local processes (7 min); 5-min chaos: 15 faults, 31,146 acked writes, **LOST 0**, converged in 22 s (`results/chaos-20261121-2355.md`); Docker target not run yet (no Docker here); REVIEW-LATER #21–#23 |
 | D11 | Benchmarks + graphs | Meet | REVIEW | .team/design/D11-benchmarks.md | 2026-11-21 | built; `results/README.md` (4 graphs + takeaways); found restart slowdown (REVIEW-LATER #19); 400 tests pass |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
 
-- **Prateek:** D10 chaos + cluster tests IMPLEMENTING; then D12 demo runbook; D6 (6a + 6c) in REVIEW; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
+- **Prateek:** next: D12 demo runbook + README + interview notes. D10, D6, D0-P, D1, D3 in REVIEW
 - **Meet:** D11, D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-22, D10):** **D10 is on main** (REVIEW, REVIEW-LATER #21–#23). `make cluster-test` (9 tests on the real cluster, real timers, incl. a 5-min chaos run) is green on local processes; the chaos report says 31,146 acked writes, LOST 0. Please (1) run it once on Docker: `CLUSTER_TARGET=docker make cluster-test PYTHON=.venv/bin/python` (I have no Docker; it uses `docker-compose.nosloppy.yml` for test 3 and wipes `./data`), and (2) OK the shared bits (#22): `CONFIG=${CONFIG:-…}` in your `tools/cluster_local.sh`, `cluster.local.nosloppy.yaml`, `cluster.nosloppy.yaml`, `docker-compose.nosloppy.yml`, the `cluster-test` / `chaos` Makefile targets. (3) For D7 (#23): right after a restart, a coordinator's channel to the node can be in reconnect backoff ≤ 1 s while gossip already says ALIVE, so a read then skips it and read repair misses it — fine as best-effort, just so you know. Your #20: my `.venv` is Python 3.12.15 now (uv had it cached), 3/3 full runs green — try that. DEC-16 (matplotlib): see Prateek's answer when he reads it.
 - **Meet → Prateek (2026-11-21):** **DEC-15 confirmed**, and your §17 edits to my `server.py` / `replica.py` are fine (I will still look at them under REVIEW-LATER #16). Thanks for updating the handoff.py heading in INTERFACES. Segfault: yes, I see it too on Python 3.14 (it hit me during D8), so a 3.11 venv is worth a try (#17b). I removed your 6c line and your DEC-14 line.
 - **Meet → Prateek (2026-11-21):** **D11 is on main** (REVIEW, REVIEW-LATER #18): `python -m tools.bench run` / `plot`, results and takeaways in `results/README.md`. Worth a look for D10/D12: the timeline run shows that a node's **restart** (not its kill) drops throughput ~5–20x for ~20 s (`results/timeline.png`, #19). Also: the full suite in one process segfaults for me too on 3.14 (#20); in two halves all 400 pass.
 - **Meet → Prateek (2026-11-21):** D11 is designed (`.team/design/D11-benchmarks.md`). Please agree to **DEC-16**: `matplotlib` in `requirements.txt` (shared file; SPEC already lists it). Until then I only install it in my venv. The bench starts its own local cluster on ports 50061+ and a temp data dir, so it never touches a cluster on 50051–55.
@@ -105,3 +106,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 23:25  Meet  D11  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet; DEC-15 confirmed, DEC-16 proposed)
 - 2026-11-21 23:20  Prateek  D10  TODO → DESIGNING → DESIGNED → IMPLEMENTING  (design saved; §6 no-loss rule fixed: chain of stored writes; venv on Python 3.12)
 - 2026-11-21 23:59  Meet  D11  IMPLEMENTING → REVIEW  (bench.py, results/ with 4 graphs; 400 tests pass in two halves)
+- 2026-11-22 00:10  Prateek  D10  IMPLEMENTING → REVIEW  (9/9 cluster tests green locally; 5-min chaos LOST 0; Docker run left to Meet)

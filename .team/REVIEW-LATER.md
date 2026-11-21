@@ -37,6 +37,9 @@ of copying what a production system like Dynamo or Cassandra does.
 | 18 | D11 benchmarks: `tools/bench.py`, `tests/test_bench.py`, `results/` (README with takeaways) | Meet | Prateek | 2026-11-21 | deviations in D11 §9; DEC-16 matplotlib still open |
 | 19 | Found by D11 timeline: after a killed node restarts, throughput drops ~5–20x for ~20 s, p99 1–3 s (`results/timeline.png`). Candidates: hinted handoff (one ReplicaPut + fsync per hint, all owners' stand-ins at once), read repair on every stale key, anti-entropy round. Measure each (turn one off at a time) before fixing | Meet | both | 2026-11-21 | not fixed in D11 (measurement task); touches handoff.py (Meet), storage fsync (Prateek), antientropy (Prateek) |
 | 20 | Full suite in one process segfaults in grpc GC on Python 3.14 (2 of 2 runs today); split in two halves it passes: 400 passed, 1 skipped. Same as #17b | Meet | both | 2026-11-21 | Prateek's venv is on 3.12 now (D10 row) — I will try that too |
+| 21 | D10 chaos + cluster tests: `tools/cluster_control.py`, `tools/chaos.py` (no-loss chain rule §6), `tests/cluster/` (9 tests), reports in `results/` | Prateek | Meet | 2026-11-22 | deviations in D10 §12; Docker target written but not run |
+| 22 | D10 shared bits: `CONFIG` in Meet's `tools/cluster_local.sh`, `cluster.local.nosloppy.yaml`, `cluster.nosloppy.yaml`, `docker-compose.nosloppy.yml`, Makefile `cluster-test` / `chaos` | Prateek | Meet | 2026-11-22 | design §9 said "one OK from Meet" |
+| 23 | Found by D10 test 6: just after a restart, a coordinator's outgoing channel can be in reconnect backoff (≤ 1 s) while gossip already shows the node ALIVE → a read skips it, read repair misses it (anti-entropy fixes it later). Maybe reset/try the channel when a peer turns ALIVE? Possibly related to #19 | Prateek | Meet | 2026-11-22 | best-effort today; not a data-loss bug |
 
 ## Done
 

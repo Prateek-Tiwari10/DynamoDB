@@ -227,3 +227,23 @@ Phase 3 demo still to do by Meet.
 his two files (PROGRESS blocker line).
 
 **Next step:** D10 chaos + cluster test suite (Prateek), then D12 demo runbook + README.
+
+## Session 10 — 2026-11-21/22 · Prateek · D10 chaos + cluster tests designed and built; D10 → REVIEW
+
+**Done:**
+- D10 designed in the design chat and saved (`.team/design/D10-chaos-cluster-tests.md`). Two calls by
+  Prateek: (1) the no-loss rule is a chain — a missing value is fine only if a later stored write
+  (any outcome) saw it; the first wording gave false LOSTs for writes whose coordinator crashed after
+  storing; (2) Python 3.11 cannot be downloaded here, so `.venv` is now Python 3.12 (3/3 full runs green,
+  no segfault).
+- Built `tools/cluster_control.py` (RealCluster, local + docker backends), `tools/chaos.py` (8 clients,
+  one fault at a time, chain-rule check, convergence check, report), `tests/cluster/` (9 tests), shared
+  no-sloppy configs + Makefile targets + `CONFIG` in `cluster_local.sh`.
+- `make cluster-test`: 9 passed (7 min). 5-min chaos: 15 faults, 31,146 acked, LOST 0, converged 21.6 s.
+  Failure detector measured: SUSPECT 5.1–6.6 s, DEAD 10.1–11.5 s, back ALIVE 2.0 s.
+- Found: read right after a restart can skip the node (channel backoff) → read repair misses it (#23).
+
+**State left:** D10 in REVIEW (REVIEW-LATER #21–#23). Meet: run the Docker target once, OK the shared
+bits. Open for Prateek: DEC-16 (matplotlib in requirements.txt).
+
+**Next step:** D12 demo runbook + README + interview notes (Prateek).
