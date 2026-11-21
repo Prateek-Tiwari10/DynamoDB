@@ -3,7 +3,9 @@
 Any node can receive a request. Writes are coordinated by the key's first replica (others forward
 to it), reads by any replica. The coordinator handles its own copy first (one answer), asks the
 other replicas in parallel and replies as soon as W (or R) answers are in. Later answers finish in
-the background. Read repair comes in D7, stand-in nodes (sloppy quorum) in D8.
+the background. After a read, replicas that were missing versions are repaired in the
+background (read repair). Replicas this node sees as DEAD are not asked. Stand-in nodes (sloppy
+quorum) come in D8.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from dynamo.dynamo_pb2 import (
     ReplicaPutRequest,
 )
 from dynamo.vclock import VectorClock
-from dynamo.version import Version, context_of, parse_context, reconcile
+from dynamo.version import Version, clock_key, context_of, parse_context, reconcile
 from dynamo.wire import version_from_proto, version_to_proto
 
 if TYPE_CHECKING:
@@ -64,6 +66,19 @@ def request_budget(context, config: ClusterConfig) -> float:
     return min(budget, remaining)
 
 
+def repair_plan(reconciled: list[Version],
+                holdings: dict[str, list[Version]]) -> dict[str, list[Version]]:
+    """For each node, the reconciled versions it is missing: those for which none of its own
+    versions has an EQUAL clock. Nodes that miss nothing are left out."""
+    plan: dict[str, list[Version]] = {}
+    for node_id, held in holdings.items():
+        have = {clock_key(v.clock) for v in held}
+        missing = [v for v in reconciled if clock_key(v.clock) not in have]
+        if missing:
+            plan[node_id] = missing
+    return plan
+
+
 class Coordinator:
     """Entry point for Put, Get and Delete, both from clients and from Forward."""
 
@@ -77,6 +92,7 @@ class Coordinator:
         self.membership = membership
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._repairing: set[tuple[str, str]] = set()     # (key, node) repairs in flight
 
     # ----- client entry: coordinate here or Forward -----
 
@@ -154,7 +170,7 @@ class Coordinator:
             return QUORUM_FAILED, None, []
         deadline = self._deadline(budget)
         version = await self._write_local(key, context, value, tombstone)
-        others = [node_id for node_id in replicas if node_id != self.node_id]
+        others = [node_id for node_id in self._reachable(replicas) if node_id != self.node_id]
         written = await self._replicate(key, version, others, w, deadline)
         status = OK if len(written) >= w else QUORUM_FAILED
         return status, version, written
@@ -167,8 +183,9 @@ class Coordinator:
             return GetResponse(status=QUORUM_FAILED)
         deadline = self._deadline(budget)
         local = self.storage.get(req.key)    # this node's answer counts as one
-        others = [node_id for node_id in replicas if node_id != self.node_id]
-        answers = await self._collect(req.key, others, r, deadline)
+        others = [node_id for node_id in self._reachable(replicas) if node_id != self.node_id]
+        answers, late = await self._collect(req.key, others, r, deadline)
+        self._spawn(self._repair(req.key, local, list(answers), late))   # after the reply
         read_from = [self.node_id] + [node_id for node_id, _ in answers]
         if len(read_from) < r:
             return GetResponse(status=QUORUM_FAILED, read_from=read_from)
@@ -207,21 +224,26 @@ class Coordinator:
         """Send the version to ``others`` in parallel; the nodes that acked, this node first."""
         tasks = {asyncio.create_task(self._replica_put(node_id, key, version, deadline)): node_id
                  for node_id in others}
-        acks = await self._wait_for(tasks, have=1, needed=w, deadline=deadline)
+        acks, late = await self._wait_for(tasks, have=1, needed=w, deadline=deadline)
+        for task in late:
+            self._track(task)                            # not cancelled (D5 Q4)
         return [self.node_id] + [node_id for node_id, _ in acks]
 
-    async def _collect(self, key: str, others: list[str], r: int,
-                       deadline: float) -> list[tuple[str, list[Version]]]:
-        """Ask ``others`` for their versions in parallel; (node, versions) per answer."""
+    async def _collect(self, key: str, others: list[str], r: int, deadline: float
+                       ) -> tuple[list[tuple[str, list[Version]]], dict[asyncio.Task, str]]:
+        """Ask ``others`` for their versions in parallel. Returns (node, versions) per answer
+        and the calls still running (for read repair)."""
         tasks = {asyncio.create_task(self._replica_get(node_id, key, deadline)): node_id
                  for node_id in others}
         return await self._wait_for(tasks, have=1, needed=r, deadline=deadline)
 
     async def _wait_for(self, tasks: dict[asyncio.Task, str], have: int, needed: int,
-                        deadline: float) -> list[tuple[str, Any]]:
+                        deadline: float
+                        ) -> tuple[list[tuple[str, Any]], dict[asyncio.Task, str]]:
         """Wait until ``have`` + successful answers reaches ``needed``, it no longer can, or the
         deadline passes. A task's result is None for "no answer". Returns (node, result) for each
-        success in arrival order. Tasks still running are left to finish in the background."""
+        success in arrival order, and the tasks still running (task -> node). They are not
+        cancelled; the caller decides who waits for them."""
         successes: list[tuple[str, Any]] = []
         pending = set(tasks)
         while have + len(successes) < needed:
@@ -235,9 +257,7 @@ class Coordinator:
             for task in done:
                 if task.result() is not None:
                     successes.append((tasks[task], task.result()))
-        for task in pending:
-            self._track(task)                            # not cancelled (Q4)
-        return successes
+        return successes, {task: tasks[task] for task in pending}
 
     async def _replica_put(self, node_id: str, key: str, version: Version,
                            deadline: float) -> bool | None:
@@ -267,6 +287,41 @@ class Coordinator:
             logger.warning("ReplicaGet %s from %s failed: %s", key, node_id, error.code().name)
             return None
         return [version_from_proto(v) for v in reply.versions]
+
+    # ----- read repair (D7) -----
+
+    async def _repair(self, key: str, local: list[Version],
+                      answers: list[tuple[str, list[Version]]],
+                      late: dict[asyncio.Task, str]) -> None:
+        """Background, after a Get: wait for the late ReplicaGet answers (each ends within its
+        RPC timeout), reconcile everything, and send every node that answered the versions it
+        is missing. Best-effort: failures are logged by ``_replica_put`` and never retried."""
+        if late:
+            done, _ = await asyncio.wait(late)
+            answers += [(late[task], task.result()) for task in done if task.result() is not None]
+        holdings = {self.node_id: local, **dict(answers)}
+        reconciled = reconcile([v for held in holdings.values() for v in held])
+        plan = repair_plan(reconciled, holdings)
+        await asyncio.gather(*(self._repair_node(key, node_id, missing)
+                               for node_id, missing in plan.items()))
+
+    async def _repair_node(self, key: str, node_id: str, missing: list[Version]) -> None:
+        """Send one node its missing versions, one ReplicaPut each (or apply them locally when
+        the node is this one). Skipped if a repair of the same (key, node) is already running."""
+        if (key, node_id) in self._repairing:
+            return
+        self._repairing.add((key, node_id))
+        try:
+            logger.info("read repair: %d version(s) of %s to %s", len(missing), key, node_id)
+            for version in missing:
+                if node_id == self.node_id:
+                    async with self._key_lock(key):
+                        await self.storage.apply(key, version)
+                else:
+                    deadline = self._deadline(self.config.rpc_timeout_ms / 1000)
+                    await self._replica_put(node_id, key, version, deadline)
+        finally:
+            self._repairing.discard((key, node_id))
 
     async def _forward(self, order: list[str], req: ForwardRequest,
                        budget: float) -> ForwardResponse | None:
@@ -299,6 +354,11 @@ class Coordinator:
     def _route_order(self, replicas: list[str]) -> list[str]:
         """ALIVE, then SUSPECT, then DEAD; list order inside each (sorted() is stable)."""
         return sorted(replicas, key=lambda node_id: STATE_RANK.get(self.membership.state(node_id), 2))
+
+    def _reachable(self, replicas: list[str]) -> list[str]:
+        """The replicas worth a replica call: all but those this node sees as DEAD.
+        SUSPECT ones are still asked (SUSPECT can flap on a healthy cluster)."""
+        return [node_id for node_id in replicas if self.membership.state(node_id) != DEAD]
 
     def _alive_count(self, replicas: list[str]) -> int:
         """How many of the replicas this node believes are ALIVE."""

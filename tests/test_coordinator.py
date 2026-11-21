@@ -1,16 +1,20 @@
-"""Unit tests for dynamo/coordinator.py: time budget, quorum loop, routing, single-replica path."""
+"""Unit tests for dynamo/coordinator.py: time budget, quorum loop, routing, single-replica path,
+read repair."""
 
 import asyncio
+import logging
 import time
 
+import grpc
 import pytest
 
 from dynamo import dynamo_pb2
 from dynamo.config import ClusterConfig
-from dynamo.coordinator import Coordinator, request_budget
+from dynamo.coordinator import Coordinator, repair_plan, request_budget
 from dynamo.ring import Ring
 from dynamo.vclock import VectorClock
 from dynamo.version import Version, context_of, merge_into, parse_context
+from dynamo.wire import version_from_proto, version_to_proto
 
 ONE_NODE = ClusterConfig(nodes={"node1": "localhost:50051"}, n=1, r=1, w=1)
 FIVE_NODES = ClusterConfig(nodes={f"node{i}": f"localhost:5005{i}" for i in range(1, 6)})
@@ -237,6 +241,11 @@ async def answer(after: float, result):
     return result
 
 
+def cancel(tasks) -> None:
+    for task in tasks:
+        task.cancel()
+
+
 def tasks_for(*answers) -> dict:
     return {asyncio.create_task(answer(after, result)): f"node{i + 2}"
             for i, (after, result) in enumerate(answers)}
@@ -245,10 +254,11 @@ def tasks_for(*answers) -> dict:
 async def test_wait_stops_at_the_quorum_and_keeps_the_rest_running():
     coordinator = make_coordinator()
     tasks = tasks_for((0.01, True), (0.3, True))
-    got = await coordinator._wait_for(tasks, have=1, needed=2, deadline=coordinator._deadline(1.0))
+    got, late = await coordinator._wait_for(tasks, have=1, needed=2,
+                                            deadline=coordinator._deadline(1.0))
     assert got == [("node2", True)]
-    assert len(coordinator._tasks) == 1          # the slow one runs on in the background
-    await coordinator.drain(1.0)
+    assert list(late.values()) == ["node3"]       # the slow one is handed back, still running
+    await asyncio.wait(late)
     assert all(task.done() and task.result() is True for task in tasks)
 
 
@@ -256,28 +266,31 @@ async def test_wait_fails_early_when_quorum_is_out_of_reach():
     coordinator = make_coordinator()
     tasks = tasks_for((0.01, None), (5.0, True))   # one failure, the other is very slow
     started = time.monotonic()
-    got = await coordinator._wait_for(tasks, have=1, needed=3, deadline=coordinator._deadline(10))
+    got, late = await coordinator._wait_for(tasks, have=1, needed=3,
+                                            deadline=coordinator._deadline(10))
     assert got == []
     assert time.monotonic() - started < 0.5       # did not wait for the slow one
-    await coordinator.drain(0)
+    cancel(late)
 
 
 async def test_wait_respects_the_deadline():
     coordinator = make_coordinator()
     tasks = tasks_for((5.0, True), (5.0, True))
     started = time.monotonic()
-    got = await coordinator._wait_for(tasks, have=1, needed=2, deadline=coordinator._deadline(0.2))
+    got, late = await coordinator._wait_for(tasks, have=1, needed=2,
+                                            deadline=coordinator._deadline(0.2))
     assert got == []
     assert 0.15 < time.monotonic() - started < 0.6
-    await coordinator.drain(0)
+    cancel(late)
 
 
 async def test_wait_with_quorum_already_met_returns_at_once():
     coordinator = make_coordinator()
     tasks = tasks_for((5.0, True))
-    assert await coordinator._wait_for(tasks, have=1, needed=1,
-                                       deadline=coordinator._deadline(1.0)) == []
-    await coordinator.drain(0)
+    got, late = await coordinator._wait_for(tasks, have=1, needed=1,
+                                            deadline=coordinator._deadline(1.0))
+    assert got == [] and len(late) == 1
+    cancel(late)
 
 
 # ---------- background tasks and locks ----------
@@ -309,3 +322,151 @@ def test_key_lock_is_one_lock_per_key():
     coordinator = make_coordinator()
     assert coordinator._key_lock("a") is coordinator._key_lock("a")
     assert coordinator._key_lock("a") is not coordinator._key_lock("b")
+
+
+# ---------- read repair (D7) ----------
+
+class FakePeers:
+    """Records every ReplicaPut and ReplicaGet and keeps what was put in ``stored`` (which also
+    answers gets); ``failing`` nodes answer UNAVAILABLE."""
+
+    def __init__(self, stored: dict[str, list[Version]] | None = None,
+                 failing: set[str] = frozenset()) -> None:
+        self.stored = stored or {}
+        self.failing = failing
+        self.puts: list[tuple[str, Version]] = []
+        self.gets: list[str] = []
+
+    def stub(self, node_id: str) -> "FakeStub":
+        return FakeStub(self, node_id)
+
+
+class FakeStub:
+    def __init__(self, peers: FakePeers, node_id: str) -> None:
+        self.peers, self.node_id = peers, node_id
+
+    def _check(self) -> None:
+        if self.node_id in self.peers.failing:
+            raise grpc.aio.AioRpcError(grpc.StatusCode.UNAVAILABLE, grpc.aio.Metadata(),
+                                       grpc.aio.Metadata())
+
+    async def ReplicaPut(self, request, timeout, metadata):
+        self._check()
+        version = version_from_proto(request.version)
+        self.peers.puts.append((self.node_id, version))
+        stored = self.peers.stored.get(self.node_id, [])
+        self.peers.stored[self.node_id], _ = merge_into(stored, version)   # like a real replica
+        return dynamo_pb2.ReplicaPutResponse(ok=True, node_id=self.node_id)
+
+    async def ReplicaGet(self, request, timeout, metadata):
+        self._check()
+        self.peers.gets.append(self.node_id)
+        versions = [version_to_proto(v) for v in self.peers.stored.get(self.node_id, [])]
+        return dynamo_pb2.ReplicaGetResponse(versions=versions)
+
+
+OLD = ver(b"old", {"node1": 1})
+NEW = ver(b"new", {"node1": 2})
+SIB = ver(b"sib", {"node1": 1, "node2": 1})
+
+
+def test_repair_plan_sends_only_what_is_missing():
+    plan = repair_plan([NEW], {"node1": [NEW], "node2": [OLD], "node3": []})
+    assert plan == {"node2": [NEW], "node3": [NEW]}       # node1 has it: left out
+
+
+def test_repair_plan_siblings_go_to_both_sides():
+    plan = repair_plan([NEW, SIB], {"node1": [NEW], "node2": [SIB]})
+    assert plan == {"node1": [SIB], "node2": [NEW]}
+
+
+def test_repair_plan_tombstones_are_repaired_too():
+    gone = ver(b"", {"node1": 3}, tombstone=True)
+    assert repair_plan([gone], {"node2": [NEW]}) == {"node2": [gone]}
+
+
+def test_repair_plan_nothing_to_do():
+    assert repair_plan([NEW], {"node1": [NEW], "node2": [NEW]}) == {}
+
+
+def repair_coordinator(peers: FakePeers) -> Coordinator:
+    coordinator = make_coordinator(FIVE_NODES)
+    coordinator.peers = peers
+    return coordinator
+
+
+async def test_repair_sends_missing_versions_and_repairs_itself():
+    peers = FakePeers()
+    coordinator = repair_coordinator(peers)
+    await coordinator._repair("k", [OLD], [("node2", [NEW]), ("node3", [])], {})
+    assert sorted(peers.puts, key=lambda put: put[0]) == [("node3", NEW)]
+    assert coordinator.storage.get("k") == [NEW]          # the coordinator's own copy
+
+
+async def test_no_repair_when_in_sync():
+    peers = FakePeers()
+    coordinator = repair_coordinator(peers)
+    await coordinator._repair("k", [NEW], [("node2", [NEW]), ("node3", [NEW])], {})
+    assert peers.puts == []
+
+
+async def test_repair_waits_for_late_answers():
+    peers = FakePeers()
+    coordinator = repair_coordinator(peers)
+    late = {asyncio.create_task(answer(0.05, [OLD])): "node3",
+            asyncio.create_task(answer(0.01, None)): "node4"}   # node4 never answered
+    await coordinator._repair("k", [NEW], [("node2", [NEW])], late)
+    assert peers.puts == [("node3", NEW)]                 # the late one, not node4
+
+
+async def test_repair_not_duplicated():
+    peers = FakePeers()
+    coordinator = repair_coordinator(peers)
+    coordinator._repairing.add(("k", "node2"))            # a repair of (k, node2) is running
+    await coordinator._repair("k", [NEW], [("node2", [OLD]), ("node3", [OLD])], {})
+    assert peers.puts == [("node3", NEW)]
+    assert coordinator._repairing == {("k", "node2")}     # node3's entry removed when done
+
+
+async def test_repair_failure_logged_not_retried(caplog):
+    peers = FakePeers(failing={"node2"})
+    coordinator = repair_coordinator(peers)
+    with caplog.at_level(logging.WARNING, logger="dynamo.coordinator"):
+        await coordinator._repair("k", [NEW], [("node2", [OLD]), ("node3", [OLD])], {})
+    assert peers.puts == [("node3", NEW)]
+    assert "ReplicaPut k to node2 failed: UNAVAILABLE" in caplog.text
+    assert coordinator._repairing == set()
+
+
+def test_reachable_skips_only_dead():
+    coordinator = make_coordinator(FIVE_NODES)
+    coordinator.membership = FakeMembership({"node2": dynamo_pb2.DEAD, "node3": dynamo_pb2.SUSPECT})
+    assert coordinator._reachable(["node2", "node3", "node4"]) == ["node3", "node4"]
+
+
+async def test_get_and_put_skip_a_dead_replica():
+    coordinator = make_coordinator(FIVE_NODES)
+    key = next(k for k in (f"k{i}" for i in range(1000))
+               if coordinator._replicas(k)[0] == "node1")
+    dead, alive = coordinator._replicas(key)[1:]
+    coordinator.membership = FakeMembership({dead: dynamo_pb2.DEAD})
+    coordinator.peers = FakePeers()
+    put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    get = await coordinator.get(dynamo_pb2.GetRequest(key=key), 1.0)
+    await coordinator.drain(1.0)
+    assert (put.status, get.status) == (dynamo_pb2.OK, dynamo_pb2.OK)
+    assert [node for node, _ in coordinator.peers.puts] == [alive]
+    assert coordinator.peers.gets == [alive]
+
+
+async def test_fast_fail_counts_only_alive():
+    # Meet's D7 Q5 decision: a SUSPECT replica does not count towards W / R.
+    coordinator = make_coordinator(FIVE_NODES)
+    key = next(k for k in (f"k{i}" for i in range(1000))
+               if coordinator._replicas(k)[0] == "node1")
+    second, third = coordinator._replicas(key)[1:]
+    coordinator.membership = FakeMembership({second: dynamo_pb2.SUSPECT, third: dynamo_pb2.DEAD})
+    coordinator.peers = FakePeers()
+    put = await coordinator.put(dynamo_pb2.PutRequest(key=key, value=b"v"), 1.0)
+    assert put.status == dynamo_pb2.QUORUM_FAILED
+    assert coordinator.peers.puts == []
