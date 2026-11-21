@@ -14,7 +14,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, confirmed by Meet); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
-| D6 | Failure detection + replica sync: 6a gossip, ~~6b~~ (Meet, row D6b, DEC-14), 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | 6a built and pushed; 6b moved to Meet (DEC-14, done); **6c to design** |
+| D6 | Failure detection + replica sync: 6a gossip, ~~6b~~ (Meet, row D6b, DEC-14), 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | 6a built and pushed; 6b moved to Meet (DEC-14, done); **6c designed (§11–§21, DEC-15), building** |
 | D7 | Read repair + membership-aware routing | Meet | REVIEW | .team/design/D7-read-repair.md | 2026-11-21 | Phase 3 demo passes locally; 313 tests pass |
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D6c (Merkle anti-entropy) designing next; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
+- **Prateek:** D6c (Merkle anti-entropy) designed, implementing; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
 - **Meet:** D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW; next: D11 benchmarks
 
 ## Blockers / questions for the partner
@@ -97,3 +97,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 12:20  Meet  D8  IMPLEMENTING → REVIEW  (stand-ins, demo_sloppy.sh; 343 tests pass)
 - 2026-11-21 12:26  Meet  D7, D8  Docker demos passed (demo_phase3.sh, demo_sloppy.sh)
 - 2026-11-21 20:08  Prateek  D6  6b marked as moved to Meet (DEC-14); 6c next to design
+- 2026-11-21 22:30  Prateek  D6  6c DESIGNED (§11–§21, DEC-15 agreed by Prateek; Meet to confirm), implementing

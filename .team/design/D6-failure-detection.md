@@ -3,11 +3,11 @@
 D6 has three parts, built and pushed in order: **6a gossip + failure detector** → 6b hinted handoff → 6c Merkle anti-entropy (DEC-12).
 
 > **6b moved to Meet on 2026-11-21 (DEC-14).** Design and as-built: `.team/design/D6b-hinted-handoff.md`, row D6b in PROGRESS.
-> This doc keeps 6a (built) and 6c (to be designed).
+> This doc keeps 6a (built, §1–§10) and 6c (decided 2026-11-21, §11–§21).
 
-This file is updated as each part is decided. **Only 6a is decided. Implement only 6a.**
+Status: **6a decided and built** (§1–§10). **6b moved to Meet** (DEC-14). **6c decided** (§11–§21) — implement it now.
 
-Note: this file is a design/instructions note — do NOT commit it to the code repo. Save it as `.team/design/D6-failure-detection.md` (notes commit) before coding.
+Note: this file is a design/instructions note — do NOT commit it to the code repo. Its content goes into `.team/design/D6-failure-detection.md` (notes commit) before coding.
 
 ---
 
@@ -311,3 +311,358 @@ Live check (5 local processes, `tools/cluster_local.sh`, production timers): `kv
 node3 SUSPECT 6.5 s after `kill -9` and DEAD at 11.5 s (log: `ALIVE -> SUSPECT` 5.0 s and
 `SUSPECT -> DEAD` 10.0 s after the last heartbeat); after a restart, ALIVE within 3 s with a new
 incarnation.
+
+---
+
+# 6b — Hinted handoff
+
+Moved to Meet (DEC-14). Design and as-built notes: `.team/design/D6b-hinted-handoff.md`. What 6c relies on from it: hints are stored **apart** from own data (`storage._hints`, `hints.json`), so `storage.keys()` never lists them and they never enter a Merkle tree.
+
+---
+
+# 6c — Merkle anti-entropy
+
+Scope of 6c: new `dynamo/merkle.py` (pure tree functions), new `dynamo/antientropy.py` (the loop + the two server-side functions), `dynamo/storage.py` (`keys()`), `tests/conftest.py` (test timer + `kill` stops the loop), new `tests/test_merkle.py`, new `tests/test_antientropy.py`. Shared changes (proto, config, `server.py` wiring, `replica.py` handlers) need **DEC-15** (§17).
+
+## 11. What 6c does (one paragraph)
+
+Hinted handoff and read repair fix most differences, but not all: a hint can die with its stand-in, a key that is never read is never read-repaired, and a write can reach fewer than N replicas. So in the background, every node, once per interval, picks one partner node and checks whether **the keys they both own** are identical. Each side builds a small hash tree over those keys. If the two root hashes are equal (the normal case), the round ends after one RPC. If not, the sides find the few buckets whose hashes differ and swap only those buckets' keys and versions, merging them with `storage.apply` (safe in any order, any number of times — DEC-11). Repeat rounds until the roots match.
+
+## 12. Which pairs, and what one tree covers
+
+- A tree is built **per pair of nodes, over the keys both of them own**: key `k` is in the tree of pair (A, B) when both A and B are in `ring.preference_list(k, n)`.
+- Both sides apply the **same filter** to their own data, so both trees cover the same "should-be-identical" set. A key one side is missing still changes that side's bucket hash → it gets found.
+- **Which pairs share keys:** every pair. With 5 nodes and N = 3, each key has 3 owners = 3 pairs out of 10, so each pair shares about **30 %** of all keys (measured on our ring, 32 vnodes: 22–33 % per pair). Each node is in 4 pairs.
+- The tree is **not stored**. It is rebuilt from the storage dict at the start of each round for the chosen partner (measured: ~60 ms for 10k keys, mostly `preference_list`).
+- Rejected: one tree per ring range (Dynamo paper / Cassandra). Needs a key-range API in Meet's `ring.py` and range bookkeeping per vnode; the pair filter is one line on top of `preference_list` and gives the same result for our cluster size.
+
+## 13. Decisions (final)
+
+| # | Decision |
+|---|---|
+| Q1 | One tree **per pair**, over keys whose preference list contains both nodes (§12). Rebuilt each round. |
+| Q2 | Key digest = `sha256` of a fixed JSON encoding of `[key, sorted(version encodings)]`, version encoding = `json.dumps(version_to_json(v), sort_keys=True)`. **Tombstones in** (deletes must spread, DEC-06). **Hints out** (they live apart in `_hints`; `storage.keys()` lists own data only). Full 32-byte sha256 everywhere (no truncation: one less thing to defend). |
+| Q3 | Fixed **256 buckets** (`BUCKETS = 256`, constant in `merkle.py`, not config): `bucket = first 2 bytes of sha256(key) mod 256`. Shape: **root → 256 bucket hashes → key digests**. ~10k keys → ~2.8k shared per pair → ~11 keys per bucket. |
+| Q4 | **Rebuild every round** from the dict, in one synchronous pass (no `await` inside, so no write can change the dict half way). No incremental updates. |
+| Q5 | Two RPCs: **`CompareTree`** sends the root only; reply = "same", or all 256 bucket hashes. Then **`ExchangeBuckets`** sends my entries for the differing buckets and gets the partner's entries for the same buckets back. Identical replicas: **one RPC, root only**. |
+| Q6 | **Both directions in one round** (push-pull, like gossip): the partner applies what I send, I apply what it returns. |
+| Q7 | New config key **`anti_entropy_ms`** (default **10000**). Partner = **round-robin over the other nodes** (sorted ids), skipping any that is not ALIVE. First round **one interval after start** (not at boot). Every pair is checked by each side at least once every 4 intervals. |
+| Q8 | Proto messages / RPCs in §17; handlers in Meet's `replica.py` are one line each and call `node.anti_entropy.on_compare(...)` / `on_exchange(...)`. |
+| — | **At most 32 differing buckets per round** (`MAX_BUCKETS_PER_ROUND = 32`). A node that lost all its data catches up over ~8 rounds instead of one huge message (gRPC's default limit is 4 MB). |
+| — | Receiving side applies only keys **it owns together with the sender** (same filter); anything else is skipped with one WARNING per sender. |
+| — | `ring_fingerprint` is sent in `CompareTree`. Mismatch → reply "same" (nothing to sync with a node that has a different ring) + one ERROR per sender. Syncing across different rings would copy keys to non-owners. |
+| — | A failed or timed-out RPC ends the round (DEBUG log); the loop never dies (same pattern as gossip). Each RPC uses `rpc_timeout_ms`. |
+| — | Rounds started by A and by B at the same time are fine: `apply` is idempotent and order-free. |
+
+### Why round-robin and not random (Q7)
+
+Random (like gossip) works, but a pair can go unchecked for a long time by bad luck. Round-robin over 4 partners guarantees each pair is compared within 4 intervals by each side, so "converges within a few rounds" is a promise, not a probability — and tests can wait a fixed bound.
+
+## 14. `dynamo/merkle.py` — pure functions (no I/O, no asyncio)
+
+```python
+BUCKETS = 256
+
+@dataclass(frozen=True)
+class Tree:
+    root: bytes
+    buckets: list[bytes]          # BUCKETS hashes, index = bucket id
+
+def bucket_of(key: str) -> int:
+    return int.from_bytes(hashlib.sha256(key.encode()).digest()[:2], "big") % BUCKETS
+
+def key_digest(key: str, versions: list[Version]) -> bytes:
+    """Same key + same set of versions (any order) -> same digest."""
+    encoded = sorted(json.dumps(version_to_json(v), sort_keys=True) for v in versions)
+    return hashlib.sha256(json.dumps([key, encoded]).encode()).digest()
+
+def build(entries: dict[str, list[Version]]) -> Tree:
+    per_bucket: list[list[tuple[str, bytes]]] = [[] for _ in range(BUCKETS)]
+    for key, versions in entries.items():
+        per_bucket[bucket_of(key)].append((key, key_digest(key, versions)))
+    buckets = [hashlib.sha256(b"".join(d for _, d in sorted(items))).digest()
+               for items in per_bucket]
+    return Tree(root=hashlib.sha256(b"".join(buckets)).digest(), buckets=buckets)
+
+def diff(mine: list[bytes], theirs: list[bytes]) -> list[int]:
+    """Bucket ids whose hashes differ. Raises ValueError if the lengths differ."""
+    if len(mine) != len(theirs):
+        raise ValueError(f"bucket count {len(mine)} != {len(theirs)}")
+    return [i for i, (a, b) in enumerate(zip(mine, theirs)) if a != b]
+```
+
+- Keys inside a bucket are sorted, so insertion order never matters.
+- An empty bucket hashes `sha256(b"")`; two empty trees are equal.
+- `version_to_json` is imported from `storage.py` (already deterministic: clock via `vclock.to_json`, sorted).
+- `key_digest` covers counters, `updated_ms`, value and tombstone flag — the same things `version.fingerprint` covers, so "same digest" = "same fingerprint".
+
+## 15. `dynamo/storage.py` — one new method
+
+```python
+def keys(self) -> list[str]:
+    """Keys of this node's own data (tombstoned keys included, hints not included)."""
+    self._require_loaded()
+    return list(self._data)
+```
+
+## 16. `dynamo/antientropy.py`
+
+```python
+MAX_BUCKETS_PER_ROUND = 32
+
+class AntiEntropy:
+    def __init__(self, self_id, config, storage, ring, membership, peers) -> None: ...
+    async def start(self) -> None          # create task running _run()
+    async def stop(self) -> None           # cancel + await; safe twice / before start
+    async def sync_once(self) -> bool      # one round with the next partner; True if anything was exchanged
+    def on_compare(self, req: TreeRoot) -> TreeBuckets          # server side, called by replica.py
+    async def on_exchange(self, req: BucketData) -> BucketData   # server side, called by replica.py
+```
+
+### 16.1 Helpers
+
+```python
+def _owns_both(self, key: str, peer: str) -> bool:
+    owners = self.ring.preference_list(key, self.config.n)
+    return self.self_id in owners and peer in owners
+
+def _shared(self, peer: str) -> dict[str, list[Version]]:
+    return {k: self.storage.get(k) for k in self.storage.keys() if self._owns_both(k, peer)}
+
+def _entries(self, peer: str, bucket_ids: list[int]) -> list[KeyVersions]:
+    wanted = set(bucket_ids)
+    return [KeyVersions(key=k, versions=[version_to_proto(v) for v in vs])
+            for k, vs in self._shared(peer).items() if merkle.bucket_of(k) in wanted]
+
+async def _apply_entries(self, peer: str, entries) -> int:
+    changed = 0
+    for entry in entries:
+        if not self._owns_both(entry.key, peer):
+            self._warn_once(peer, "%s sent key %s that we do not share; skipped", peer, entry.key)
+            continue
+        for v in entry.versions:
+            if await self.storage.apply(entry.key, version_from_proto(v)):
+                changed += 1
+    return changed
+```
+
+### 16.2 The loop and one round (client side)
+
+```python
+async def _run(self) -> None:
+    interval_s = self.config.anti_entropy_ms / 1000
+    while True:
+        await asyncio.sleep(interval_s)            # first round one interval after start
+        try:
+            await self.sync_once()
+        except Exception:
+            logger.warning("anti-entropy round failed", exc_info=True)
+
+def _next_partner(self) -> str | None:
+    """Round-robin over the other nodes (sorted), skipping those that are not ALIVE."""
+    others = sorted(n for n in self.config.nodes if n != self.self_id)
+    for _ in range(len(others)):
+        peer = others[self._cursor % len(others)]
+        self._cursor += 1
+        if self.membership.is_alive(peer):
+            return peer
+    return None
+
+async def sync_once(self) -> bool:
+    peer = self._next_partner()
+    if peer is None:
+        return False
+    timeout = self.config.rpc_timeout_ms / 1000
+    stub = self.peers.stub(peer)
+    tree = merkle.build(self._shared(peer))
+    try:
+        reply = await stub.CompareTree(TreeRoot(sender=self.self_id, root=tree.root,
+                                                ring_fingerprint=self.ring_fingerprint), timeout=timeout)
+        if reply.same:
+            return False
+        differing = merkle.diff(tree.buckets, list(reply.buckets))[:MAX_BUCKETS_PER_ROUND]
+        if not differing:
+            return False                   # data changed between the two builds; next round
+        answer = await stub.ExchangeBuckets(BucketData(sender=self.self_id, buckets=differing,
+                                                       entries=self._entries(peer, differing)), timeout=timeout)
+    except grpc.aio.AioRpcError as error:
+        logger.debug("anti-entropy with %s failed: %s", peer, error.code())
+        return False
+    changed = await self._apply_entries(peer, answer.entries)
+    logger.info("anti-entropy with %s: %d buckets differed, got %d keys, %d versions changed here",
+                peer, len(differing), len(answer.entries), changed)
+    return True
+```
+
+`self.ring_fingerprint = ring.fingerprint(config.n)` (same value membership uses).
+
+### 16.3 Server side (called by Meet's handlers)
+
+```python
+def on_compare(self, req: TreeRoot) -> TreeBuckets:
+    if req.ring_fingerprint != self.ring_fingerprint:
+        self._warn_once(req.sender, "ring of %s differs from mine; not syncing", req.sender, level=logging.ERROR)
+        return TreeBuckets(same=True)
+    tree = merkle.build(self._shared(req.sender))
+    if tree.root == req.root:
+        return TreeBuckets(same=True)
+    return TreeBuckets(same=False, buckets=tree.buckets)
+
+async def on_exchange(self, req: BucketData) -> BucketData:
+    bucket_ids = list(req.buckets)[:MAX_BUCKETS_PER_ROUND]
+    mine = self._entries(req.sender, bucket_ids)       # read BEFORE applying theirs
+    await self._apply_entries(req.sender, req.entries)
+    return BucketData(sender=self.self_id, buckets=bucket_ids, entries=mine)
+```
+
+Reading `mine` before applying is not required for correctness (merge is order-free) — it just keeps the reply to "what I had", which is easier to reason about in logs.
+
+### 16.4 The round, as a picture
+
+```
+A (picks B, round-robin)                         B
+build tree(A∩B keys)
+CompareTree(root_A) ───────────────────────────► build tree(B∩A keys)
+                                                 root_B == root_A ?  → same=True   (end: 1 RPC)
+                     ◄─────────────────────────── same=False + 256 bucket hashes
+diff → buckets [7, 91]
+ExchangeBuckets([7,91], A's keys in 7,91) ─────► mine = B's keys in 7,91
+                                                 apply A's versions (storage.apply)
+                     ◄─────────────────────────── mine
+apply B's versions (storage.apply)
+next round with this pair: roots equal → 1 RPC
+```
+
+## 17. Shared changes (DEC-15 — Meet must agree)
+
+**DEC-15 — Merkle anti-entropy: RPCs, config key, wiring** (from D6c)
+- Decision: two new `NodeService` RPCs `CompareTree` and `ExchangeBuckets`; config `anti_entropy_ms` (default 10000); `Node` gets an `anti_entropy` part started after `handoff` and stopped before `coordinator.drain`; handlers in `replica.py` call `node.anti_entropy`.
+- Why: replicas that drift (lost hint, unread key, write to < N replicas) must converge without a read (SPEC C11).
+- Rejected: per-range trees (needs a range API in `ring.py`); one RPC with all bucket hashes every round (identical replicas would send 256 hashes for nothing); sending whole data sets (no tree at all).
+- Affects: `proto/dynamo/dynamo.proto`, `dynamo/replica.py`, `dynamo/server.py`, `dynamo/config.py`, `cluster.yaml`, `cluster.local.yaml`, SPEC settings table, INTERFACES.
+
+### Proto (add to `dynamo.proto`)
+
+```proto
+service NodeService {
+  ...
+  rpc CompareTree(TreeRoot) returns (TreeBuckets);          // phase 4, anti-entropy
+  rpc ExchangeBuckets(BucketData) returns (BucketData);     // phase 4, anti-entropy
+}
+
+message TreeRoot {
+  string sender = 1;
+  string ring_fingerprint = 2;
+  bytes root = 3;                       // sha256 of the 256 bucket hashes
+}
+message TreeBuckets {
+  bool same = 1;                        // true: roots equal (or rings differ) -> nothing to do
+  repeated bytes buckets = 2;           // 256 bucket hashes, only when same = false
+}
+message KeyVersions {
+  string key = 1;
+  repeated Version versions = 2;        // every version, tombstones included
+}
+message BucketData {
+  string sender = 1;
+  repeated uint32 buckets = 2;          // bucket ids being exchanged
+  repeated KeyVersions entries = 3;     // sender's keys in those buckets
+}
+```
+
+### Meet's files (send him exactly this)
+
+`replica.py` — two handlers, same decorator as the others:
+```python
+@rpc_handler("node")
+async def CompareTree(self, request, context):
+    """Compare Merkle roots for the keys we share with the sender (6c)."""
+    return self._node.anti_entropy.on_compare(request)
+
+@rpc_handler("node")
+async def ExchangeBuckets(self, request, context):
+    """Swap the keys of the differing buckets (6c)."""
+    return await self._node.anti_entropy.on_exchange(request)
+```
+
+`server.py`:
+- `Node` gets a field `anti_entropy: AntiEntropy`.
+- `build_node`: `anti_entropy = AntiEntropy(node_id, config, storage, ring, membership, peers)`.
+- `start()`: `await self.anti_entropy.start()` after `handoff.start()`.
+- `stop()`: `await self.anti_entropy.stop()` after `handoff.stop()`.
+
+### Config + yamls
+
+- `dynamo/config.py`: `anti_entropy_ms: int = 10000`; validation: `> 0`.
+- `cluster.yaml`, `cluster.local.yaml`: `anti_entropy_ms: 10000   # Merkle sync with one partner`.
+- SPEC settings table: add the row.
+
+### Mine
+
+- `tests/conftest.py`: `TEST_TIMERS["anti_entropy_ms"] = 60000` (effectively off, so Meet's read-repair tests still see stale replicas); 6c tests opt in with `make_cluster(5, anti_entropy_ms=200, sloppy_quorum=False)`.
+- `Cluster.kill`: add `await node.anti_entropy.stop()` after `handoff.stop()`.
+- INTERFACES: my section gets `merkle.py`, `antientropy.py`, `storage.keys()`.
+
+## 18. Edge cases
+
+| Case | What happens | Test |
+|---|---|---|
+| Replicas identical | `CompareTree` says same → 1 RPC, no `ExchangeBuckets` | `test_identical_only_root` |
+| Key missing on one side | Its bucket differs → the missing side receives it | `test_missing_key_both_directions` |
+| Different values, concurrent clocks | Both get both → same siblings on both | `test_siblings_converge` |
+| Tombstone on one side only | Tombstone travels; old value dropped where it is BEFORE | `test_delete_spreads` |
+| Same counters, different `updated_ms` | Digest differs → exchanged → `reconcile` takes max → equal | unit `test_digest_includes_updated_ms` |
+| Hints on a stand-in | Not in `storage.keys()` → never in any tree | `test_hints_not_in_tree` |
+| Key this node does not own in its dict | Filtered out of every tree | `test_non_owned_key_ignored` |
+| Partner sends a key we do not share | Skipped, one WARNING | `test_exchange_skips_unshared` |
+| Ring fingerprint differs | `same=True` + one ERROR; nothing copied | `test_ring_mismatch_no_sync` |
+| > 32 buckets differ (node wiped) | 32 per round; converges over more rounds | `test_large_drift_converges` |
+| Partner not ALIVE | Skipped by round-robin | `test_skips_dead_partner` |
+| Partner dies mid-round | RPC error → DEBUG, round ends, loop continues | `test_partner_down_loop_survives` |
+| A write lands between A's build and B's | Roots or buckets differ for a moment → fixed next round | (covered by random test) |
+| A→B and B→A rounds at the same time | Both apply; merge is idempotent and order-free | (covered by random test) |
+| Both trees empty | Equal roots → same | unit `test_empty_trees_equal` |
+
+## 19. Tests
+
+### `tests/test_merkle.py` (pure)
+
+- Same entries inserted in different orders, versions in different list orders → same root and buckets.
+- Change one value → root differs and `diff` returns exactly `[bucket_of(key)]`.
+- Remove one key → only its bucket differs. Tombstone vs no key → differs.
+- Same counters, different `updated_ms` → digest differs.
+- `bucket_of` is in `range(256)` and stable; empty trees equal; `diff` raises on length mismatch.
+- Random: 200 random keys/versions, two random insertion orders → equal trees.
+
+### `tests/test_antientropy.py` (cluster: `make_cluster(5, anti_entropy_ms=200, sloppy_quorum=False)`, no client reads)
+
+Inject differences with `cluster.replica(node).ReplicaPut(...)` straight to **one** owner (no coordinator, no read repair, no hints), then check owners with `LocalGet` (a local read — no read repair).
+
+- **Identical → root only:** after writes through the coordinator, patch/count `ExchangeBuckets` calls on all nodes over a few rounds → 0.
+- **Missing key:** put `k` only on owner 1 → `wait_until` all 3 owners have it (3 s).
+- **Stopped replica:** `stop_node(owner3)`, write 20 keys via coordinator (W = 2 succeeds), `restart(owner3)`, no reads → `wait_until` owner3 has all 20 (5 s: the others skip owner3 until gossip shows it ALIVE again, ~1 s).
+- **Delete spreads:** tombstone on one owner only → all owners end with the tombstone.
+- **Siblings:** two concurrent versions on two different owners → all three end with both.
+- **Hints untouched:** a stand-in's `hints()` content is unchanged by anti-entropy rounds.
+- **Random convergence:** 300 random ReplicaPuts (random key, random single owner, random clocks incl. tombstones) → `wait_until` for every key all owners have the same `version.fingerprint` (10 s).
+- **Large drift:** put 1000 keys on one node only (so nearly all 256 buckets differ for its pairs) → converges over several rounds, at most 32 buckets per round (`wait_until`, 15 s).
+
+### Unit (`AntiEntropy` with fake storage/ring/peers, no network)
+
+- `_next_partner` round-robin order and skipping non-ALIVE; `None` when nobody is ALIVE.
+- `on_compare`: equal root → same; different → 256 buckets; ring mismatch → same + ERROR once.
+- `on_exchange`: applies only shared keys; returns own entries of the asked buckets; caps at 32.
+
+## 20. For Meet (send with DEC-15)
+
+1. DEC-15 — please confirm (proto, `replica.py`, `server.py`, config, yamls, SPEC).
+2. The proto block (§17) and the two handlers + four `server.py` lines (§17), or tell me to add them with your OK, as with D3.
+3. Read repair stays as is; anti-entropy is the background safety net for keys nobody reads.
+4. Test default `anti_entropy_ms = 60000`, so your read-repair tests still see stale replicas.
+
+## 21. Done when (6c)
+
+- Two replicas made to differ on purpose converge within a few rounds with **no client read**.
+- Identical replicas exchange only the root (`ExchangeBuckets` never called).
+- Random test: same fingerprint on every owner for every key after sync.
+- `make test` green; "As built" for 6c filled; **D6 → REVIEW** (6a + 6c; 6b is Meet's D6b row).

@@ -105,3 +105,9 @@ changes. The frozen signatures in INTERFACES do not change. 6a and 6c stay with 
 Why: D8 (sloppy quorum, Meet) sends the hinted writes and 6b stores and delivers them; one owner
 designs both sides so they match (above all: are hints visible to reads?). Prateek keeps 6c and D10.
 
+
+## DEC-15 — Merkle anti-entropy: RPCs, config key, wiring  (2026-11-21, agreed by Prateek; Meet to confirm, from D6c)
+Decision: two new `NodeService` RPCs `CompareTree(TreeRoot) → TreeBuckets` and `ExchangeBuckets(BucketData) → BucketData` (messages in D6 §17); config `anti_entropy_ms` (default 10000; test cluster 60000 = effectively off, 6c tests opt in with 200); `Node` gets an `anti_entropy` part started after `handoff` and stopped after `handoff.stop()`, before `coordinator.drain`; the two handlers in `replica.py` are one line each and call `node.anti_entropy.on_compare` / `on_exchange`. With Prateek's OK (as with D3, DEC-11), Prateek adds the `replica.py` and `server.py` lines exactly as in D6 §17 so main stays green; Meet to confirm.
+Why: replicas that drift (lost hint, unread key, write to < N replicas) must converge without a read (SPEC C11).
+Rejected: per-range trees (needs a range API in `ring.py`); one RPC with all bucket hashes every round (identical replicas would send 256 hashes for nothing); sending whole data sets (no tree at all).
+Affects: `proto/dynamo/dynamo.proto`, `dynamo/replica.py`, `dynamo/server.py`, `dynamo/config.py`, `cluster.yaml`, `cluster.local.yaml`, SPEC settings table, INTERFACES.
