@@ -1,0 +1,7 @@
+cpu: 12th Gen Intel(R) Core(TM) i5-1245U
+cores: 12
+ram: 30.0 GiB
+os: Linux-7.0.0-43-generic-x86_64-with-glibc2.43
+python: 3.14.4
+grpcio: 1.85.1
+setup: load generator and all nodes on this one machine (local processes)
