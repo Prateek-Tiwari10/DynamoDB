@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 3 demo on a running 5-node cluster (N=3, R=2, W=2, SUSPECT 5 s, DEAD 10 s):
 #   1. failure detection: kill a node, watch it go SUSPECT then DEAD, start it, back to ALIVE
-#   2. read repair: the restarted node missed a write; one read fixes its copy
+#   2. read repair: a node that missed a write during a short outage; one read fixes its copy
 #   3. siblings: two clients write from the same context through two coordinators,
 #      a read shows both values, a put with the read's context merges them
 # Start the cluster first:  tools/cluster_local.sh start   or   make up  (then DOCKER=1)
@@ -64,14 +64,24 @@ SINCE=$SECONDS; EVENT=kill; kill_node "$third"
 wait_state "$first" "$third" SUSPECT 15
 wait_state "$first" "$third" DEAD 25
 
-# ---------- 2. read repair ----------
-
-step "2. put $KEY = pen while $third is DEAD (it is not even asked)"
-kv --node "localhost:$(port "$first")" put "$KEY" pen -v || fail "put pen"
-
 step "start $third again"
 SINCE=$SECONDS; EVENT=restart; start_node "$third"
 wait_state "$first" "$third" ALIVE 20
+
+# ---------- 2. read repair ----------
+# The replica is made stale with a short outage: killed, one write, started again, all before
+# gossip suspects it. (After a long outage a sloppy-quorum stand-in would hand the write over
+# itself; that is the hinted handoff demo, tools/demo_sloppy.sh.)
+
+step "2. kill $third, put $KEY = pen right away (W=2 met by $first and $second), start $third"
+kill_node "$third"
+kv --node "localhost:$(port "$first")" put "$KEY" pen -v || fail "put pen"
+start_node "$third"
+for _ in $(seq 50); do
+    kv --node "localhost:$(port "$third")" info >/dev/null 2>&1 && break
+    sleep 0.2
+done
+[ "$(state_of "$first" "$third")" = ALIVE ] || fail "$first should still see $third as ALIVE"
 
 step "$third still holds the old value"
 kv --node "localhost:$(port "$third")" local-get "$KEY"

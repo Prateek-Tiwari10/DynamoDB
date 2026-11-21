@@ -7,12 +7,21 @@ call it DEAD, so the tests read again until the repair shows up instead of readi
 
 import logging
 
+import pytest
+
 from dynamo import dynamo_pb2
 from dynamo.vclock import VectorClock
 from dynamo.version import Version
 from dynamo.wire import version_to_proto
 
 KEY = "cart:42"
+
+
+@pytest.fixture
+async def cluster(make_cluster):
+    """Sloppy quorum off: these tests are about read repair and D7 routing; with it on, a
+    stand-in's hint could reach the stale replica first and hide what is being tested."""
+    return await make_cluster(5, sloppy_quorum=False)
 
 
 def replicas(cluster, key: str = KEY) -> list[str]:
