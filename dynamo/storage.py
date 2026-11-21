@@ -137,6 +137,11 @@ class Storage:
         self._require_loaded()
         return list(self._data.get(key, []))
 
+    def keys(self) -> list[str]:
+        """Keys of this node's own data (tombstoned keys included, hints not included)."""
+        self._require_loaded()
+        return list(self._data)
+
     async def apply(self, key: str, version: Version) -> bool:
         """Merge a version (a put, or a tombstone for a delete) into the key's stored set.
 

@@ -97,6 +97,20 @@ def test_delete_unknown_key(tmp_path):
     assert open_storage(tmp_path).get("ghost")[0].tombstone is True
 
 
+def test_keys_lists_own_data_only(tmp_path):
+    """keys() (for anti-entropy, D6c): own keys, tombstoned ones too, never hints."""
+    storage = open_storage(tmp_path)
+
+    async def run() -> None:
+        await storage.apply("live", put(b"v"))
+        await storage.apply("gone", tombstone())
+        await storage.put_hint("node2", "held", put(b"h"))
+    asyncio.run(run())
+
+    assert sorted(storage.keys()) == ["gone", "live"]
+    assert sorted(open_storage(tmp_path).keys()) == ["gone", "live"]   # same after replay
+
+
 def test_log_line_format(tmp_path):
     storage = open_storage(tmp_path)
     version = Version(value=b"hi", clock=VectorClock({"node1": 3}, {"node1": 1732090000000}))
