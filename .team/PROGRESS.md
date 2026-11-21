@@ -16,7 +16,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
 | D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | **6a built and pushed** (gossip + failure detector; 292 tests pass; live: SUSPECT ~5 s, DEAD ~10 s); next: design 6b |
 | D7 | Read repair + membership-aware routing | Meet | REVIEW | .team/design/D7-read-repair.md | 2026-11-21 | Phase 3 demo passes locally; 313 tests pass |
-| D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | DESIGNING | .team/design/D6b-hinted-handoff.md | 2026-11-21 | draft being written |
+| D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | IMPLEMENTING | .team/design/D6b-hinted-handoff.md | 2026-11-21 | design confirmed (all recommended options) |
 | D8 | Sloppy quorum | Meet | TODO | — | 2026-10-23 | |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
@@ -26,7 +26,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D6a done; next design 6b (hinted handoff), then 6c. D0-P, D1, D3 in REVIEW
-- **Meet:** D6b design (hinted handoff, DEC-14); D0-M, D2, D4, D5, D7 in REVIEW; D8 after D6b
+- **Meet:** D6b implementing (hinted handoff, DEC-14); D0-M, D2, D4, D5, D7 in REVIEW; D8 after D6b
 
 ## Blockers / questions for the partner
 
@@ -91,3 +91,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 11:25  Meet  D7  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet; fast fail counts only ALIVE)
 - 2026-11-21 11:33  Meet  D7  IMPLEMENTING → REVIEW  (read repair, DEAD-aware fan-out, demo_phase3.sh; 313 tests pass)
 - 2026-11-21 11:49  Meet  D6b  TODO → DESIGNING  (6b moved from Prateek, DEC-14)
+- 2026-11-21 11:52  Meet  D6b  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet)
