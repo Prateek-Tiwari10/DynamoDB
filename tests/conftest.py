@@ -30,6 +30,7 @@ TEST_TIMERS = {
     "dead_after_ms": 1000,
     "rpc_timeout_ms": 200,
     "handoff_retry_ms": 300,
+    "anti_entropy_ms": 60000,   # effectively off; anti-entropy tests opt in with a short timer
 }
 
 Condition = Callable[[], bool | Awaitable[bool]]
@@ -146,6 +147,7 @@ class Cluster:
         await node.server.stop(0)
         await node.membership.stop()
         await node.handoff.stop()
+        await node.anti_entropy.stop()
         await node.coordinator.drain(0)
         await node.peers.close()
         self._down.append(node)
