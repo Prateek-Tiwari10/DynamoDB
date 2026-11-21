@@ -12,7 +12,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=${PYTHON:-python}
+# The project's .venv if there is one (the system python usually lacks grpc), else python.
+if [ -x .venv/bin/python ]; then PY=${PYTHON:-.venv/bin/python}; else PY=${PYTHON:-python}; fi
+"$PY" -c "import grpc, yaml" 2>/dev/null ||
+    { echo "$PY cannot import grpc/yaml: run 'pip install -r requirements.txt' or set PYTHON=..." >&2; exit 3; }
 DATA=${DATA_DIR:-./data}
 ALL_NODES="node1 node2 node3 node4 node5"
 mkdir -p "$DATA"

@@ -6,7 +6,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-PY=${PYTHON:-python}
+# The project's .venv if there is one (the system python usually lacks grpc), else python.
+if [ -x .venv/bin/python ]; then PY=${PYTHON:-.venv/bin/python}; else PY=${PYTHON:-python}; fi
+"$PY" -c "import grpc, yaml" 2>/dev/null ||
+    { echo "$PY cannot import grpc/yaml: run 'pip install -r requirements.txt' or set PYTHON=..." >&2; exit 3; }
 HOST=${1:-localhost}
 KEY=${2:-cart:42}
 ok=1
