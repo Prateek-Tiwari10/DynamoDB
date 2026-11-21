@@ -84,13 +84,13 @@ Why: protobuf parsing is lenient (some random bytes decode without error), so "b
 Rejected: keeping the proto context (lenient parsing); collapsing same-value siblings (order dependent); leaving Meet's files broken until Meet could update them (red main).
 Affects: `vclock.py`, `version.py`, `storage.py`, `coordinator.py`, `replica.py`, INTERFACES (vclock, version, storage blocks), SPEC (reconciliation rules), DEC-10 (context format only).
 
-## DEC-12 — D6 combines gossip, hinted handoff and Merkle anti-entropy; Merkle is in scope  (2026-11-21, Prateek's call; Meet to confirm)
+## DEC-12 — D6 combines gossip, hinted handoff and Merkle anti-entropy; Merkle is in scope  (2026-11-21, Prateek's call; confirmed by Meet)
 Decision: The old D6 (membership + gossip + failure detector), D9 (hinted handoff) and stretch S1 (Merkle anti-entropy) become one task **D6**, owned by Prateek, with one design doc and three parts built and pushed in order: **6a** gossip, **6b** hinted handoff, **6c** Merkle anti-entropy. D9 and S1 no longer exist; "needs D9" now means "needs D6b". Merkle anti-entropy moves from stretch into the main plan (SPEC C11, Phase 4). 6c will add new RPCs to the shared proto and handlers in Meet's `replica.py`; their shape is agreed with Meet when 6c is designed (separate DEC then).
 Why: the three are one story, how replicas stay in sync when nodes fail: gossip notices a failure, hinted handoff covers short failures, anti-entropy repairs what is left after long or repeated failures (read repair, D7, fixes keys on read). Designing them together keeps the interfaces between them consistent. Building 6a first keeps Meet's D7 unblocked.
 Rejected: keeping Merkle as stretch (the system would have no repair for replicas that drift apart without being read); three separate design docs (the parts share membership state and storage hooks).
 Affects: TASKS (D6, D7/D8/D10 "Needs", order table, stretch list), SPEC (C11, phases), PROGRESS (D6, D9 rows), later proto + `replica.py` (6c).
 
-## DEC-13 — Gossip refutation rule and SUSPECT timeout  (2026-11-21, agreed by Prateek; Meet to confirm, from D6a)
+## DEC-13 — Gossip refutation rule and SUSPECT timeout  (2026-11-21, agreed by Prateek + Meet, from D6a)
 Decision: (1) a node that receives its own row with a strictly greater `(incarnation, heartbeat)` sets `incarnation = received + 1`; it replaces the SPEC sentence "a node seeing itself marked SUSPECT bumps its own incarnation". (2) `suspect_after_ms` default 3000 → **5000** (`config.py`, `cluster.yaml`, `cluster.local.yaml`; test cluster 300 → 500 ms).
 Why: (1) states are each node's own opinion (never gossiped), so "seeing itself SUSPECT" can never happen; the new rule fixes fast restarts in the same ms and clock jumps. (2) simulation of a healthy 5-node cluster: ~6–7 false SUSPECTs per 1000 ticks at 3 ticks, 0 at 5 ticks; DEAD never fired falsely.
 Rejected: gossiping states (SWIM) — needs rules on who may overrule whom. Persisting the last incarnation to disk — more code; refutation covers the same cases.

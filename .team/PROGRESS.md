@@ -32,14 +32,13 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 _(add a line, remove it when answered)_
 
 - **Prateek → Meet (2026-11-21):** **6a gossip is on main** — your D7 can start (states are real now; `subscribe` contract in my line below). Two things touch you: (1) I changed **your** `tests/test_server.py` (commit `685c1bf`): `test_stub_rpcs_unimplemented` used Gossip as the unbuilt-RPC example; it is now `test_gossip_answers_with_its_table` (your hinted-ReplicaPut test still covers UNIMPLEMENTED). (2) The first gossip round runs one interval after start: a round at t=0 hit not-yet-started peers and put the channels in your 1 s reconnect backoff, which made 4 of your `test_cluster_requests.py` tests fail (UNAVAILABLE / QUORUM_FAILED). Worth knowing for D7/D8 tests: right after a peer restarts, its channel can need up to ~1 s.
-- **Prateek → Meet (2026-11-21):** D6a (gossip) designed, see `.team/design/D6-failure-detection.md`. (1) **DEC-13, please confirm:** refutation = own row received with a strictly greater `(incarnation, heartbeat)` → `incarnation = received + 1`; `suspect_after_ms` 3000 → **5000** in `config.py` and both yamls (shared files). (2) `subscribe` contract for D7: plain function `cb(node_id, old, new)`, called from the gossip loop after the table changes, must be quick and must not await (start a task for async work), fires on every change including short SUSPECT flaps. (3) `is_alive` = ALIVE only; SUSPECT can flap briefly on a healthy cluster (rarer with 5 s); your D5 route order already handles it. (4) No change in `replica.py` for 6a. (5) New `Membership` methods: `tick`, `table`, `merge(msg, now)`, `check_states(now)` (INTERFACES).
-- **Prateek → Meet (2026-11-21):** DEC-12, please confirm: D6, D9 and stretch S1 are now one task **D6** (mine): 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy (moved out of stretch into the main plan). I build and push 6a first, so your D7 needs only 6a; your D8 needs the 6b interface (already frozen: `hint_for` in `ReplicaPut`, storage `put_hint` / `hints` / `drop_hint`). 6c will need new RPCs in the proto and handlers in your `replica.py`; we agree the shape when I design 6c.
 - **Prateek → Meet (2026-11-21):** shared test cluster is in `tests/conftest.py` (`cluster` = 5 nodes, `make_cluster(k)`, `kill` / `stop_node` / `restart`, `cluster.wait_until`). Use it for D5/D7/D8 tests. Your `test_static_cluster.py` and `test_cluster_requests.py` still have their own local fixtures; they work as is, switch when convenient. Also found: gRPC binds with `SO_REUSEPORT`, so a second node on a taken port starts *silently* and shares the port; `grpc.aio.server(options=[("grpc.so_reuseport", 0)])` in `build_node` would make that fail loudly (REVIEW-LATER #10, your call).
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 
 
-- **Meet → Prateek (2026-11-21):** DEC-11 confirmed, thanks for swapping my files to D3.
+
+- **Meet → Prateek (2026-11-21):** DEC-12 and DEC-13 confirmed. D8 now needs D6b instead of D9. Thanks for the gossip start-delay fix and the test_server.py change. Taking `grpc.so_reuseport = 0` in `build_node` (REVIEW-LATER #10). Starting D7 on top of 6a.
 
 ## Log
 
@@ -84,3 +83,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 00:57  Prateek  D6  TODO → DESIGNING  (D6 + D9 + S1 combined into D6, DEC-12)
 - 2026-11-21 01:21  Prateek  D6  DESIGNING → IMPLEMENTING  (6a designed and saved, DEC-13; 6b and 6c designed later in the same doc)
 - 2026-11-21 01:30  Prateek  D6  6a built and pushed (gossip + failure detector, DEC-13); D6 stays IMPLEMENTING until 6c
+- 2026-11-21 20:00  Meet  DEC-12, DEC-13  confirmed
