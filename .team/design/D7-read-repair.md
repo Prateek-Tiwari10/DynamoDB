@@ -1,6 +1,6 @@
 # D7 — Read repair + membership-aware routing
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-21
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-21
 
 > Confirmed by Meet on 2026-11-21 (Q5: only ALIVE counts for fast fail). Builds on D5
 > (routing, quorum loop) and Prateek's D6a (real ALIVE / SUSPECT / DEAD states). D0-M Q2 already
@@ -152,4 +152,42 @@ self._repairing: set[tuple[str, str]]                       # (key, node) repair
    That is what hinted handoff (6b) and Merkle anti-entropy (6c) are for.
 
 ## 9. As built
-<filled after implementation>
+Built 2026-11-21 in `dynamo/coordinator.py`, `tests/test_coordinator.py`,
+`tests/test_read_repair.py`, `tools/demo_phase3.sh`.
+
+**Small deviations from section 4/5**
+- `_repair_plan` became the module-level function `repair_plan(reconciled, holdings)`: it is pure
+  and needs nothing from the coordinator, so it is tested without building one.
+- One extra helper `_repair_node(key, node, missing)`: the per-node part (the `_repairing` check,
+  then one `ReplicaPut` per version, or a local `storage.apply` for this node). `_repair` runs it
+  for all nodes of the plan in parallel with `asyncio.gather`.
+- `_wait_for` now always returns `(answers, late)`, where `late` is {task: node} of the calls still
+  running; it no longer tracks them itself. `_replicate` tracks its late tasks as before (D5 Q4);
+  `_collect` hands them to `_repair`.
+- The repair task is started right after `_collect`, also when the read ends in `QUORUM_FAILED`
+  (what did answer can still be repaired, and the late calls need someone to wait for them). It
+  still runs only after the reply is sent: it is a background task and the reply needs no await.
+- A local repair applies under the key's lock, the same lock `_write_local` holds while it picks
+  the next counter, so a repair cannot slip between "read stored versions" and "store new version".
+- Every repair `ReplicaPut` gets its own `rpc_timeout_ms` (500 ms); it is not tied to the client's
+  request deadline, which has already passed or almost passed by then.
+- Fast fail counts only ALIVE (Meet's Q5 decision); the code is the D5 `_alive_count`, unchanged.
+  Fan-out uses the new `_reachable` (not DEAD) for both `_write` and `_do_get`.
+
+**Tests:** 12 new unit tests (4 `repair_plan`, 5 `_repair`, `_reachable`, DEAD skip on put and get,
+fast fail counts only ALIVE) and the 4 `_wait_for` tests adapted; 8 cluster tests in
+`tests/test_read_repair.py` (every cluster row of section 6). Full suite: **313 passed, 1 skipped**
+(the skip is Prateek's `STORAGE_TIMING` benchmark). Checked that the tests really test the code:
+with the repair call removed, all 6 repair cluster tests fail; with `_reachable` removed, both
+DEAD-skip tests fail.
+
+**Phase 3 demo (local cluster, 5 processes):** PHASE 3 DEMO PASSED. node1 saw the killed node3 as
+SUSPECT ~5 s and DEAD ~11 s after the kill, ALIVE ~2 s after the restart; node3 held `book`, one
+`get` later it held `pen` (log: `read repair: 1 version(s) of cart:42 to node3`); siblings `x`,
+`y` shown and merged into `xy`. Docker run (`DOCKER=1`) to be done by Meet.
+
+**Known limits**
+- Right after a restart the coordinator may still see the node as DEAD (until gossip says ALIVE,
+  ~2 s) or its channel may still be in the 1 s reconnect backoff; reads in that window do not
+  repair it. The next read does. Tests and the demo read again until the repair shows up.
+- A replica that is never read stays stale until D6b / 6c.

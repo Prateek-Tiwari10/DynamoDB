@@ -182,3 +182,20 @@ Meet: D0-M, D2, D4, D5 in REVIEW; D7 can start now.
 
 **Next step:** design 6b (hinted handoff) in the design chat, then 6c (Merkle).
 
+## Session 8 — 2026-11-21 · Meet · D2, D4, D5 built; DEC-12/13 confirmed; D7 built
+
+**Done:**
+- D2 single node, D4 static cluster, D5 coordinator (routing, forwarding, quorum loop) designed,
+  built and set to REVIEW; Phase 1 and Phase 2 demos pass locally and in Docker.
+- DEC-12 and DEC-13 confirmed. `grpc.so_reuseport = 0` in `build_node`: a second node on a taken
+  port now fails to start (test fails without the fix).
+- D7 designed (Q5: fast fail counts only ALIVE, Meet's choice) and built: read repair after every
+  get (late answers included, only missing versions sent, one repair per (key, node) in flight),
+  fan-out skips DEAD replicas. 20 new tests; full suite 313 passed, 1 skipped.
+  `tools/demo_phase3.sh` passes on the local cluster.
+
+**State left:** Meet: D0-M, D2, D4, D5, D7 in REVIEW (REVIEW-LATER #5–#8, #12). Docker run of the
+Phase 3 demo still to do by Meet.
+
+**Next step:** D8 sloppy quorum once Prateek's 6b is in; meanwhile D11 benchmarks can start.
+
