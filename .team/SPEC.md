@@ -108,6 +108,7 @@ dynamo/
 | `suspect_after_ms` | 5000 | No heartbeat → SUSPECT (DEC-13) |
 | `dead_after_ms` | 10000 | No heartbeat → DEAD |
 | `handoff_retry_ms` | 5000 | Hint delivery retry period |
+| `anti_entropy_ms` | 10000 | One Merkle anti-entropy round with one partner (DEC-15) |
 | `vclock_max_entries` | 10 | Prune limit |
 | `snapshot_every` | 1000 | Log lines between two snapshots |
 | `sloppy_quorum` | true | Use a stand-in node when a preferred one is DEAD (phase 4) |

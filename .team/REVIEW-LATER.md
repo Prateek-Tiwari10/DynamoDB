@@ -31,6 +31,9 @@ of copying what a production system like Dynamo or Cassandra does.
 | 12 | D7 read repair + DEAD-aware routing: `repair_plan`, `_repair`, `_reachable`, `_wait_for` returns late tasks, `test_read_repair.py`, `demo_phase3.sh`; also the `so_reuseport = 0` fix + test (commit `874682d`) | Meet | Prateek | 2026-11-21 | Q5: fast fail counts only ALIVE (Meet); deviations in D7 §9 |
 | 13 | D6b hinted handoff: hint parts of `storage.py` (`put_hint`, `hints`, `drop_hint`, replay, `hints.json`), `handoff.py` loop, `replica.py` hinted ReplicaPut, tests | Meet | Prateek | 2026-11-21 | touches Prateek's `storage.py` (DEC-14); deviation: `hints.json` instead of snapshot format 2 (D6b §9) |
 | 14 | D8 sloppy quorum: `_targets`, `_stand_ins`, hinted `_replica_put`, `test_sloppy_quorum.py`, `demo_sloppy.sh`, demo_phase3 step 2 change | Meet | Prateek | 2026-11-21 | Q3 strict reads, Q5 SUSPECT owners get a stand-in (Meet); see D8 §9 |
+| 15 | D6 (6a gossip + 6c Merkle anti-entropy): `membership.py`, `gossip.py`, `merkle.py`, `antientropy.py`, `storage.keys()`, tests, design doc §1–§21 + both "As built" | Prateek | Meet | 2026-11-21 | DEC-13, DEC-15 (Meet to confirm); deviations in the two As-built sections |
+| 16 | Prateek's edits to Meet's `server.py` and `replica.py` for 6c (commit `22675ff`): `anti_entropy` wiring + `CompareTree` / `ExchangeBuckets` handlers | Prateek | Meet | 2026-11-21 | exactly the D6 §17 lines |
+| 17 | Known limits from 6c: (a) `ExchangeBuckets` of 32 buckets with 1 MiB values can pass gRPC's 4 MB limit (cap by bytes or raise the limit?); (b) Python 3.14 + grpcio 1.84 venv: full suite sometimes segfaults in grpc GC (also before 6c) — try a 3.11 venv like Docker | Prateek | both | 2026-11-21 | not a bug in our logic; decide after the first full version |
 
 ## Done
 

@@ -26,6 +26,7 @@ class ClusterConfig:
     suspect_after_ms: int = 5000      # DEC-13
     dead_after_ms: int = 10000
     handoff_retry_ms: int = 5000
+    anti_entropy_ms: int = 10000      # DEC-15
     vclock_max_entries: int = 10
     snapshot_every: int = 1000
     sloppy_quorum: bool = True
@@ -61,6 +62,8 @@ class Storage:
     async def put_hint(self, owner: str, key: str, version: Version) -> None
     def hints(self) -> dict[str, list[tuple[str, Version]]]
     async def drop_hint(self, owner: str, key: str, version: Version) -> None
+    # added in D6c:
+    def keys(self) -> list[str]                                 # own keys, tombstoned ones too, never hints
 ```
 
 - `load()` must finish before the server binds its port. `get`, `apply` and `counts` raise
@@ -182,17 +185,45 @@ async def cluster(tmp_path) -> Cluster                  # 5 nodes, started; stop
 - Uses Meet's `build_node(config, node_id, port, data_dir)`, `Node.start()`, `Node.stop()`,
   `node.server`, `node.peers`, `node.membership`, `node.handoff`.
 
+## merkle.py, antientropy.py (Prateek) — logic in D6c  (design: `.team/design/D6-failure-detection.md` §11–§21)
+
+```python
+# merkle.py — pure functions
+BUCKETS = 256
+@dataclass(frozen=True)
+class Tree:
+    root: bytes
+    buckets: list[bytes]                                        # BUCKETS hashes, index = bucket id
+def bucket_of(key: str) -> int                                  # first 2 bytes of sha256(key) mod 256
+def key_digest(key: str, versions: list[Version]) -> bytes      # same key + same versions (any order) -> same digest
+def build(entries: dict[str, list[Version]]) -> Tree
+def diff(mine: list[bytes], theirs: list[bytes]) -> list[int]   # differing bucket ids; ValueError on length mismatch
+
+# antientropy.py
+MAX_BUCKETS_PER_ROUND = 32
+class AntiEntropy:
+    def __init__(self, self_id, config, storage, ring, membership, peers) -> None   # no I/O
+    async def start(self) -> None                               # loop; first round one anti_entropy_ms after start
+    async def stop(self) -> None                                # safe twice / before start
+    async def sync_once(self) -> bool                           # one round with the next ALIVE partner (round-robin)
+    def on_compare(self, req: TreeRoot) -> TreeBuckets          # CompareTree handler
+    async def on_exchange(self, req: BucketData) -> BucketData  # ExchangeBuckets handler
+```
+
+- A tree covers the keys both nodes own (`ring.preference_list(key, n)` contains both). Hints never.
+
 ## server.py, reqid.py, ring.py, peers.py, coordinator.py, replica.py, client/cli.py (Meet) — FINAL
 
 Meet's signatures are in section 4 of `.team/design/D0-M-contracts.md` and are final (DEC-09, Prateek to confirm). What they call in Prateek's modules:
 
 | Meet's code | Calls |
 |---|---|
-| `build_node` | `Storage(data_dir, config)`, `Membership(self_id, config, peers, ring_fingerprint)`, `Handoff(self_id, config, storage, membership, peers)` |
-| `Node.start()` | `storage.load()` before the port is bound, then `membership.start()`, `handoff.start()` |
-| `Node.stop()` | `membership.stop()`, `handoff.stop()`, `storage.close()` last |
+| `build_node` | `Storage(data_dir, config)`, `Membership(self_id, config, peers, ring_fingerprint)`, `Handoff(self_id, config, storage, membership, peers)`, `AntiEntropy(self_id, config, storage, ring, membership, peers)` (DEC-15) |
+| `Node.start()` | `storage.load()` before the port is bound, then `membership.start()`, `handoff.start()`, `anti_entropy.start()` |
+| `Node.stop()` | `membership.stop()`, `handoff.stop()`, `anti_entropy.stop()`, `storage.close()` last |
 | `ReplicaPut` handler | `storage.apply(key, version)`; with `hint_for` set → `storage.put_hint` (D6b) |
 | `ReplicaGet` / `LocalGet` handlers | `storage.get(key)` |
 | `ClusterInfo` handler | `storage.counts()`, `membership.members()` |
 | `Coordinator._route_order` | `membership.state(node_id)` |
 | `Gossip` handler | `membership.on_gossip(msg)` |
+| `CompareTree` / `ExchangeBuckets` handlers | `anti_entropy.on_compare(req)` / `await anti_entropy.on_exchange(req)` (DEC-15) |

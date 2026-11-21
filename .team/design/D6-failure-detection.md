@@ -666,3 +666,57 @@ Inject differences with `cluster.replica(node).ReplicaPut(...)` straight to **on
 - Identical replicas exchange only the root (`ExchangeBuckets` never called).
 - Random test: same fingerprint on every owner for every key after sync.
 - `make test` green; "As built" for 6c filled; **D6 → REVIEW** (6a + 6c; 6b is Meet's D6b row).
+
+---
+
+## 6c — As built
+
+Built 2026-11-21. Commits `5fdb73b` (proto, config, yamls: shared, DEC-15), `8a0e6c8` (`merkle.py`,
+`storage.keys()`), `22675ff` (`antientropy.py` + the §17 wiring in Meet's `server.py` / `replica.py`,
+exactly as written there, with Prateek's OK; Meet to confirm), `b615d76` (tests, `conftest.py`). Full
+suite 382 passed, 1 skipped (383 collected).
+
+Built as designed: §12–§17 (pair filter on `preference_list`, sha256 key digests with tombstones in and
+hints out, 256 fixed buckets, rebuild every round in one synchronous pass, `CompareTree` root first then
+`ExchangeBuckets`, push-pull, round-robin over ALIVE partners, first round one interval after start, at
+most 32 buckets per round, receiver skips unshared keys, ring mismatch → `same` + one ERROR, failed RPC
+ends the round, loop never dies). Config validation: `anti_entropy_ms > 0` (+ test in `test_config.py`).
+Test timer `anti_entropy_ms = 60000`; `Cluster.kill` stops the loop.
+
+What differs, and why:
+- **`_warn_once(kind, peer, ...)` takes a kind**, like `membership._warn_once`. With only the peer as
+  the key, a peer's "unshared key" WARNING would silence its later "ring differs" ERROR (and back).
+- **Unit tests use two real `AntiEntropy` objects** (real `Storage` in `tmp_path`, real `Ring`) linked by a
+  fake stub that calls the other side's `on_compare` / `on_exchange` directly — instead of fake storage
+  and ring. It runs a whole round (both directions) with no network, so most §18 cases have a unit test
+  as well as a cluster test.
+- **Cluster tests read replicas with `node.storage.get`** (the in-process node's own dict — the same
+  thing `LocalGet` returns, and no read repair) instead of the `LocalGet` RPC: the large-drift test checks
+  1000 keys × 3 owners on every poll. The large-drift test also fills node1 with `storage.apply` directly
+  instead of 1000 `ReplicaPut` RPCs (same effect: one replica only, no coordinator).
+- **Identical-replicas cluster test:** the counters are installed before the writes, and the test waits
+  0.5 s after all three copies are in before it counts. Found as a rare flake: a round that compared
+  before the third copy landed can still call `ExchangeBuckets` after it — correct behaviour, not a bug.
+- **Test names** (§18 → built): unit `test_identical_only_root`, `test_missing_key_both_directions`,
+  `test_siblings_converge`, `test_delete_spreads`, `test_updated_ms_difference_converges` (+ merkle
+  `test_digest_includes_updated_ms`), `test_hints_not_in_tree`, `test_non_owned_key_ignored`,
+  `test_on_exchange_skips_unshared`, `test_on_compare_ring_mismatch`, `test_large_drift_converges_in_steps`,
+  `test_next_partner_skips_not_alive`, `test_partner_down_round_ends`, `test_loop_survives_errors`;
+  cluster `test_cluster_identical_only_root`, `test_cluster_missing_key`,
+  `test_cluster_stopped_replica_catches_up`, `test_cluster_delete_spreads`, `test_cluster_siblings_converge`,
+  `test_cluster_hints_untouched`, `test_cluster_random_convergence`, `test_cluster_large_drift`;
+  `test_merkle.py` 11 tests; `test_storage.py::test_keys_lists_own_data_only`.
+
+Known limit (REVIEW-LATER): one `ExchangeBuckets` message carries every version of up to 32 buckets.
+With large values (the API allows 1 MiB) it can pass gRPC's default 4 MB message limit; that RPC then
+fails every round for those buckets. Fine for our tests and demos (small values); fix options: cap by
+bytes instead of buckets, or raise the gRPC message limit.
+
+Live check (5 local processes, `tools/cluster_local.sh`, production timers): a key written with
+`ReplicaPut` to only one of its owners (node2) was on all 3 owners after 18.3 s with no client read
+(node2's first round, at 10 s, went to node1, which does not own the key; the next, at 20 s, to node3).
+Log: `antientropy: anti-entropy with node2: 1 buckets differed, got 1 keys, 1 versions changed here`.
+
+Environment note: on this laptop's venv (Python 3.14, grpcio 1.84) the full suite sometimes dies with a
+segfault inside grpc's C code during garbage collection — also on `main` before 6c (checked twice). Every
+test file passes on its own, and the full suite passes on most runs. Docker uses Python 3.11.

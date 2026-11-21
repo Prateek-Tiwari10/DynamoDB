@@ -14,7 +14,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D3 | Vector clocks & reconciliation | Prateek | REVIEW | .team/design/D3-vector-clocks.md | 2026-11-21 | vclock, version, storage switch; Meet's coordinator/replica swapped (DEC-11, confirmed by Meet); 217 tests pass |
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
-| D6 | Failure detection + replica sync: 6a gossip, ~~6b~~ (Meet, row D6b, DEC-14), 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | 6a built and pushed; 6b moved to Meet (DEC-14, done); **6c designed (§11–§21, DEC-15), building** |
+| D6 | Failure detection + replica sync: 6a gossip, ~~6b~~ (Meet, row D6b, DEC-14), 6c Merkle anti-entropy | Prateek | REVIEW | .team/design/D6-failure-detection.md | 2026-11-21 | 6a + 6c built (6b is Meet's D6b row); Merkle anti-entropy: `merkle.py`, `antientropy.py`, DEC-15 (Meet to confirm); 382 tests pass; live check: one-copy key on all 3 owners in 18 s with no read; REVIEW-LATER #15–#17 |
 | D7 | Read repair + membership-aware routing | Meet | REVIEW | .team/design/D7-read-repair.md | 2026-11-21 | Phase 3 demo passes locally; 313 tests pass |
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
@@ -25,13 +25,14 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 
 ## Currently
 
-- **Prateek:** D6c (Merkle anti-entropy) designed, implementing; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
+- **Prateek:** D6 (6a + 6c) in REVIEW; next: D10 chaos + cluster tests, then D12 demo runbook; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
 - **Meet:** D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW; next: D11 benchmarks
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
+- **Prateek → Meet (2026-11-21, 6c):** **D6c Merkle anti-entropy is on main** (D6 → REVIEW). Please confirm **DEC-15**. With my OK-as-with-D3 rule I added the §17 lines to your files myself, exactly as in D6 §17: `replica.py` two one-line handlers (`CompareTree`, `ExchangeBuckets`), `server.py` `anti_entropy` field + build + start after `handoff.start()` + stop after `handoff.stop()` (commit `22675ff`, REVIEW-LATER #16). Also shared: proto (4 messages, 2 RPCs), `config.py` `anti_entropy_ms` (10000, must be > 0), both yamls, SPEC row, INTERFACES. Test cluster default `anti_entropy_ms = 60000` (effectively off) so your read-repair tests still see stale replicas; my tests opt in with `make_cluster(5, anti_entropy_ms=200, sloppy_quorum=False)`. FYI: on my Python 3.14 venv the full suite sometimes segfaults inside grpc (also on main before 6c) — does yours?
 - **Prateek → Meet (2026-11-21):** read DEC-14, D6b and D8 — thanks. 6b is marked as yours in my D6 row, D6 doc and TASKS. INTERFACES: I updated the `handoff.py` heading to "Meet since DEC-14, logic in D6b" (and the ReplicaPut row) myself, so no need for you to. Your hint changes in `storage.py` go on my review list (REVIEW-LATER #13). I answered and removed your 6b-moved line, your DEC-12/13 line, and my two older lines you acknowledged. Next for me: 6c Merkle — it will need new RPCs in the proto and handlers in your `replica.py`; I'll send the shape when it is designed.
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
@@ -98,3 +99,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 12:26  Meet  D7, D8  Docker demos passed (demo_phase3.sh, demo_sloppy.sh)
 - 2026-11-21 20:08  Prateek  D6  6b marked as moved to Meet (DEC-14); 6c next to design
 - 2026-11-21 22:30  Prateek  D6  6c DESIGNED (§11–§21, DEC-15 agreed by Prateek; Meet to confirm), implementing
+- 2026-11-21 22:55  Prateek  D6  IMPLEMENTING → REVIEW  (6c built: merkle.py, antientropy.py, DEC-15; 382 tests pass)

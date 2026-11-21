@@ -209,3 +209,21 @@ Phase 3 demo still to do by Meet.
 
 **Next step:** D11 benchmarks (Meet); reviews of D0-M … D8 by Prateek.
 
+
+## Session 9 — 2026-11-21 · Prateek · D6c Merkle anti-entropy designed and built; D6 → REVIEW
+
+**Done:**
+- 6c designed in the design chat (D6 §11–§21): one tree per node pair over the keys both own, 256
+  buckets, `CompareTree` (root only) then `ExchangeBuckets` (≤ 32 buckets), push-pull, round-robin over
+  ALIVE partners every `anti_entropy_ms` (10 s). DEC-15 added (agreed by Prateek; Meet to confirm).
+- Built: `dynamo/merkle.py`, `dynamo/antientropy.py`, `storage.keys()`; shared proto/config/yamls; the
+  §17 wiring in Meet's `server.py` / `replica.py` (with Prateek's OK, as with D3). New tests:
+  `test_merkle.py` (11), `test_antientropy.py` (26), one each in `test_storage.py` / `test_config.py`.
+  Full suite 382 passed, 1 skipped. Live 5-process check: one-copy key on all 3 owners in 18 s, no read.
+- Found: the venv (Python 3.14, grpcio 1.84) sometimes segfaults in grpc during the full suite, also on
+  main before 6c; every file passes alone. On REVIEW-LATER #17.
+
+**State left:** D6 (6a + 6c) in REVIEW (REVIEW-LATER #15–#17). Meet: confirm DEC-15 and the edits to
+his two files (PROGRESS blocker line).
+
+**Next step:** D10 chaos + cluster test suite (Prateek), then D12 demo runbook + README.
