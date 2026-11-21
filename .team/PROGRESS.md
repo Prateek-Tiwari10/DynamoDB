@@ -20,20 +20,20 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
-| D11 | Benchmarks + graphs | Meet | DESIGNING | .team/design/D11-benchmarks.md | 2026-11-21 | claimed; design in progress |
+| D11 | Benchmarks + graphs | Meet | IMPLEMENTING | .team/design/D11-benchmarks.md | 2026-11-21 | designed (closed loop, own local cluster on 50061+, 3 reps, timeline run); DEC-16 matplotlib |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
 
 - **Prateek:** D6 (6a + 6c) in REVIEW; next: D10 chaos + cluster tests, then D12 demo runbook; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
-- **Meet:** D11 benchmarks DESIGNING; D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
+- **Meet:** D11 benchmarks IMPLEMENTING; D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
 
 ## Blockers / questions for the partner
 
 _(add a line, remove it when answered)_
 
-- **Prateek → Meet (2026-11-21, 6c):** **D6c Merkle anti-entropy is on main** (D6 → REVIEW). Please confirm **DEC-15**. With my OK-as-with-D3 rule I added the §17 lines to your files myself, exactly as in D6 §17: `replica.py` two one-line handlers (`CompareTree`, `ExchangeBuckets`), `server.py` `anti_entropy` field + build + start after `handoff.start()` + stop after `handoff.stop()` (commit `22675ff`, REVIEW-LATER #16). Also shared: proto (4 messages, 2 RPCs), `config.py` `anti_entropy_ms` (10000, must be > 0), both yamls, SPEC row, INTERFACES. Test cluster default `anti_entropy_ms = 60000` (effectively off) so your read-repair tests still see stale replicas; my tests opt in with `make_cluster(5, anti_entropy_ms=200, sloppy_quorum=False)`. FYI: on my Python 3.14 venv the full suite sometimes segfaults inside grpc (also on main before 6c) — does yours?
-- **Prateek → Meet (2026-11-21):** read DEC-14, D6b and D8 — thanks. 6b is marked as yours in my D6 row, D6 doc and TASKS. INTERFACES: I updated the `handoff.py` heading to "Meet since DEC-14, logic in D6b" (and the ReplicaPut row) myself, so no need for you to. Your hint changes in `storage.py` go on my review list (REVIEW-LATER #13). I answered and removed your 6b-moved line, your DEC-12/13 line, and my two older lines you acknowledged. Next for me: 6c Merkle — it will need new RPCs in the proto and handlers in your `replica.py`; I'll send the shape when it is designed.
+- **Meet → Prateek (2026-11-21):** **DEC-15 confirmed**, and your §17 edits to my `server.py` / `replica.py` are fine (I will still look at them under REVIEW-LATER #16). Thanks for updating the handoff.py heading in INTERFACES. Segfault: yes, I see it too on Python 3.14 (it hit me during D8), so a 3.11 venv is worth a try (#17b). I removed your 6c line and your DEC-14 line.
+- **Meet → Prateek (2026-11-21):** D11 is designed (`.team/design/D11-benchmarks.md`). Please agree to **DEC-16**: `matplotlib` in `requirements.txt` (shared file; SPEC already lists it). Until then I only install it in my venv. The bench starts its own local cluster on ports 50061+ and a temp data dir, so it never touches a cluster on 50051–55.
 - **Prateek → Meet (2026-11-20):** new rule: we finish the project first and review after. Nobody waits for a review; finished tasks go to REVIEW and a line goes into `.team/REVIEW-LATER.md`. We go through that list once the first full version runs. Wrong or unsafe things are still fixed at once. Add your own review items there.
 - **Meet → Prateek (2026-11-12):** D0-M is DESIGNED. DEC-02 to DEC-08 confirmed. `DeliverHint` and the tombstone purge / `last_alive` are removed from the D0-M doc, and it now uses your frozen names (`storage.load()`, `Storage(data_dir, config)`, `vclock.advance`, `MEMBER_STATE_UNSPECIFIED`). Please confirm DEC-09 (my half frozen; INTERFACES block marked FINAL).
 
@@ -101,3 +101,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 22:30  Prateek  D6  6c DESIGNED (§11–§21, DEC-15 agreed by Prateek; Meet to confirm), implementing
 - 2026-11-21 22:55  Prateek  D6  IMPLEMENTING → REVIEW  (6c built: merkle.py, antientropy.py, DEC-15; 382 tests pass)
 - 2026-11-21 23:10  Meet  D11  TODO → DESIGNING
+- 2026-11-21 23:25  Meet  D11  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet; DEC-15 confirmed, DEC-16 proposed)

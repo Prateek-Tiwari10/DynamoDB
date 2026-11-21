@@ -106,8 +106,14 @@ Why: D8 (sloppy quorum, Meet) sends the hinted writes and 6b stores and delivers
 designs both sides so they match (above all: are hints visible to reads?). Prateek keeps 6c and D10.
 
 
-## DEC-15 — Merkle anti-entropy: RPCs, config key, wiring  (2026-11-21, agreed by Prateek; Meet to confirm, from D6c)
+## DEC-15 — Merkle anti-entropy: RPCs, config key, wiring  (2026-11-21, agreed by Prateek, confirmed by Meet, from D6c)
 Decision: two new `NodeService` RPCs `CompareTree(TreeRoot) → TreeBuckets` and `ExchangeBuckets(BucketData) → BucketData` (messages in D6 §17); config `anti_entropy_ms` (default 10000; test cluster 60000 = effectively off, 6c tests opt in with 200); `Node` gets an `anti_entropy` part started after `handoff` and stopped after `handoff.stop()`, before `coordinator.drain`; the two handlers in `replica.py` are one line each and call `node.anti_entropy.on_compare` / `on_exchange`. With Prateek's OK (as with D3, DEC-11), Prateek adds the `replica.py` and `server.py` lines exactly as in D6 §17 so main stays green; Meet to confirm.
 Why: replicas that drift (lost hint, unread key, write to < N replicas) must converge without a read (SPEC C11).
 Rejected: per-range trees (needs a range API in `ring.py`); one RPC with all bucket hashes every round (identical replicas would send 256 hashes for nothing); sending whole data sets (no tree at all).
 Affects: `proto/dynamo/dynamo.proto`, `dynamo/replica.py`, `dynamo/server.py`, `dynamo/config.py`, `cluster.yaml`, `cluster.local.yaml`, SPEC settings table, INTERFACES.
+
+## DEC-16 — matplotlib in requirements.txt  (2026-11-21, agreed by Meet; Prateek to agree, from D11)
+Decision: add `matplotlib` to `requirements.txt` for the benchmark graphs (`tools/bench.py plot`). SPEC "Stack" already lists it. Only `plot` imports it (lazily), so `bench.py run`, the nodes and the tests do not need it. Until Prateek agrees, `requirements.txt` stays unchanged and matplotlib is installed in the local venv only.
+Why: D11 must output matplotlib graphs (SPEC, TASKS D11).
+Rejected: a separate `requirements-bench.txt` (one more file for one package); drawing graphs by hand as SVG (more code, nothing gained).
+Affects: `requirements.txt`; the Docker image gets matplotlib too (unused there).
