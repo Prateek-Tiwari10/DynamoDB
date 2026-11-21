@@ -124,6 +124,18 @@ async def test_start_binds_port_and_creates_data_folder(running):
     assert os.path.isdir(tmp_path / "node1")
 
 
+async def test_second_node_on_a_taken_port_fails_to_start(running, tmp_path):
+    node, _, _ = running
+    twin = build_node(make_config(), "node1", node.port, str(tmp_path / "twin"))
+    try:
+        await twin.start()
+    except RuntimeError:
+        await twin.server.stop(None)
+        return                                      # expected: the port is taken
+    await twin.stop()
+    pytest.fail("a second node started on a port that was already taken")
+
+
 async def test_cluster_info_is_local(running):
     node, channel, _ = running
     info = await dynamo_pb2_grpc.KVStoreStub(channel).ClusterInfo(dynamo_pb2.Empty())

@@ -77,7 +77,9 @@ def build_node(config: ClusterConfig, node_id: str, port: int, data_dir: str) ->
     membership = Membership(node_id, config, peers, ring.fingerprint(config.n))
     coordinator = Coordinator(node_id, config, ring, storage, peers, membership)
     handoff = Handoff(node_id, config, storage, membership, peers)
-    server = grpc.aio.server()
+    # No SO_REUSEPORT: a second node on a port that is already taken must fail to start,
+    # not silently share the port with the first one.
+    server = grpc.aio.server(options=[("grpc.so_reuseport", 0)])
     node = Node(node_id=node_id, config=config, storage=storage, ring=ring, peers=peers,
                 membership=membership, coordinator=coordinator, handoff=handoff,
                 server=server, port=port)
