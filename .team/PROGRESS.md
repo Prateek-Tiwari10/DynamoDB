@@ -19,13 +19,13 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
 | D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally and in Docker |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
-| D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
+| D10 | Chaos + cluster test suite | Prateek | IMPLEMENTING | .team/design/D10-chaos-cluster-tests.md | 2026-11-21 | 9 tests on the real cluster (local processes or Docker) + 5-min chaos with no-loss proof; venv now Python 3.12 |
 | D11 | Benchmarks + graphs | Meet | IMPLEMENTING | .team/design/D11-benchmarks.md | 2026-11-21 | designed (closed loop, own local cluster on 50061+, 3 reps, timeline run); DEC-16 matplotlib |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
 
-- **Prateek:** D6 (6a + 6c) in REVIEW; next: D10 chaos + cluster tests, then D12 demo runbook; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
+- **Prateek:** D10 chaos + cluster tests IMPLEMENTING; then D12 demo runbook; D6 (6a + 6c) in REVIEW; then D10 chaos + cluster tests, D12 demo runbook. D0-P, D1, D3 in REVIEW
 - **Meet:** D11 benchmarks IMPLEMENTING; D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
 
 ## Blockers / questions for the partner
@@ -102,3 +102,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 22:55  Prateek  D6  IMPLEMENTING → REVIEW  (6c built: merkle.py, antientropy.py, DEC-15; 382 tests pass)
 - 2026-11-21 23:10  Meet  D11  TODO → DESIGNING
 - 2026-11-21 23:25  Meet  D11  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet; DEC-15 confirmed, DEC-16 proposed)
+- 2026-11-21 23:20  Prateek  D10  TODO → DESIGNING → DESIGNED → IMPLEMENTING  (design saved; §6 no-loss rule fixed: chain of stored writes; venv on Python 3.12)
