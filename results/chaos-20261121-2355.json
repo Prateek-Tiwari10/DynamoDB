@@ -1,0 +1,151 @@
+{
+  "started": "2026-11-21 23:55",
+  "target": "local",
+  "seed": 83779,
+  "seconds_asked": 300.0,
+  "duration_s": 320.7,
+  "aborted": false,
+  "faults": [
+    {
+      "at_s": 0.0,
+      "node": "node2",
+      "kind": "stop",
+      "down_s": 14.0,
+      "recovered_s": 1.8
+    },
+    {
+      "at_s": 22.1,
+      "node": "node2",
+      "kind": "crash",
+      "down_s": 12.3,
+      "recovered_s": 1.0
+    },
+    {
+      "at_s": 41.7,
+      "node": "node3",
+      "kind": "pause",
+      "down_s": 5.4,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 52.9,
+      "node": "node5",
+      "kind": "crash",
+      "down_s": 16.7,
+      "recovered_s": 1.0
+    },
+    {
+      "at_s": 77.0,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 17.9,
+      "recovered_s": 1.6
+    },
+    {
+      "at_s": 102.9,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 16.4,
+      "recovered_s": 1.1
+    },
+    {
+      "at_s": 126.6,
+      "node": "node4",
+      "kind": "crash",
+      "down_s": 14.8,
+      "recovered_s": 1.0
+    },
+    {
+      "at_s": 148.7,
+      "node": "node3",
+      "kind": "stop",
+      "down_s": 19.5,
+      "recovered_s": 1.6
+    },
+    {
+      "at_s": 176.2,
+      "node": "node5",
+      "kind": "crash",
+      "down_s": 16.5,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 199.9,
+      "node": "node4",
+      "kind": "crash",
+      "down_s": 18.8,
+      "recovered_s": 1.6
+    },
+    {
+      "at_s": 226.7,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 6.4,
+      "recovered_s": 1.9
+    },
+    {
+      "at_s": 241.2,
+      "node": "node2",
+      "kind": "crash",
+      "down_s": 6.5,
+      "recovered_s": 0.5
+    },
+    {
+      "at_s": 254.8,
+      "node": "node3",
+      "kind": "crash",
+      "down_s": 11.3,
+      "recovered_s": 1.0
+    },
+    {
+      "at_s": 273.7,
+      "node": "node4",
+      "kind": "crash",
+      "down_s": 14.8,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 295.6,
+      "node": "node2",
+      "kind": "stop",
+      "down_s": 17.4,
+      "recovered_s": 1.1
+    }
+  ],
+  "fault_counts": {
+    "stop": 3,
+    "crash": 11,
+    "pause": 1
+  },
+  "max_nodes_down": 1,
+  "writes": {
+    "attempted": 31423,
+    "ok": 31146,
+    "failed": 6,
+    "unknown": 271
+  },
+  "reads": {
+    "not_found": 321,
+    "ok": 23066,
+    "unknown": 198,
+    "failed": 7
+  },
+  "errors": {
+    "UNAVAILABLE": 462,
+    "DEADLINE_EXCEEDED": 7
+  },
+  "keys": 15965,
+  "unreadable_keys": 0,
+  "converged": true,
+  "converge_s": 21.6,
+  "keys_differing": 0,
+  "acked": 31146,
+  "present": 15818,
+  "superseded": 15328,
+  "lost": 0,
+  "lost_writes": [],
+  "last_acked_accounted": true,
+  "invented": 0,
+  "invented_values": [],
+  "passed": true
+}

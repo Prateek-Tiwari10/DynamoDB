@@ -1,0 +1,158 @@
+{
+  "started": "2026-11-21 23:46",
+  "target": "local",
+  "seed": 48605,
+  "seconds_asked": 300.0,
+  "duration_s": 320.6,
+  "aborted": false,
+  "faults": [
+    {
+      "at_s": 0.0,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 9.4,
+      "recovered_s": 0.5
+    },
+    {
+      "at_s": 16.4,
+      "node": "node5",
+      "kind": "stop",
+      "down_s": 10.1,
+      "recovered_s": 1.5
+    },
+    {
+      "at_s": 34.5,
+      "node": "node4",
+      "kind": "stop",
+      "down_s": 14.3,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 56.1,
+      "node": "node4",
+      "kind": "stop",
+      "down_s": 18.5,
+      "recovered_s": 1.0
+    },
+    {
+      "at_s": 82.0,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 17.8,
+      "recovered_s": 1.6
+    },
+    {
+      "at_s": 108.0,
+      "node": "node5",
+      "kind": "crash",
+      "down_s": 16.3,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 131.4,
+      "node": "node4",
+      "kind": "crash",
+      "down_s": 12.4,
+      "recovered_s": 1.5
+    },
+    {
+      "at_s": 151.6,
+      "node": "node5",
+      "kind": "crash",
+      "down_s": 15.0,
+      "recovered_s": 0.8
+    },
+    {
+      "at_s": 173.9,
+      "node": "node4",
+      "kind": "crash",
+      "down_s": 9.4,
+      "recovered_s": 0.6
+    },
+    {
+      "at_s": 190.2,
+      "node": "node1",
+      "kind": "stop",
+      "down_s": 14.5,
+      "recovered_s": 1.1
+    },
+    {
+      "at_s": 212.1,
+      "node": "node1",
+      "kind": "pause",
+      "down_s": 6.4,
+      "recovered_s": 1.4
+    },
+    {
+      "at_s": 225.0,
+      "node": "node2",
+      "kind": "crash",
+      "down_s": 18.5,
+      "recovered_s": 1.1
+    },
+    {
+      "at_s": 251.0,
+      "node": "node5",
+      "kind": "stop",
+      "down_s": 10.8,
+      "recovered_s": 1.6
+    },
+    {
+      "at_s": 269.7,
+      "node": "node3",
+      "kind": "stop",
+      "down_s": 6.2,
+      "recovered_s": 1.3
+    },
+    {
+      "at_s": 283.6,
+      "node": "node4",
+      "kind": "pause",
+      "down_s": 4.7,
+      "recovered_s": 0.1
+    },
+    {
+      "at_s": 293.4,
+      "node": "node1",
+      "kind": "crash",
+      "down_s": 20.0,
+      "recovered_s": 0.8
+    }
+  ],
+  "fault_counts": {
+    "crash": 8,
+    "stop": 6,
+    "pause": 2
+  },
+  "max_nodes_down": 1,
+  "writes": {
+    "attempted": 30820,
+    "ok": 30527,
+    "failed": 6,
+    "unknown": 287
+  },
+  "reads": {
+    "not_found": 326,
+    "ok": 22602,
+    "unknown": 258,
+    "failed": 3
+  },
+  "errors": {
+    "UNAVAILABLE": 527,
+    "DEADLINE_EXCEEDED": 18
+  },
+  "keys": 15688,
+  "unreadable_keys": 0,
+  "converged": true,
+  "converge_s": 25.9,
+  "keys_differing": 0,
+  "acked": 30527,
+  "present": 15523,
+  "superseded": 15004,
+  "lost": 0,
+  "lost_writes": [],
+  "last_acked_accounted": true,
+  "invented": 0,
+  "invented_values": [],
+  "passed": true
+}
