@@ -87,6 +87,8 @@ service NodeService {
   rpc ReplicaPut(ReplicaPutRequest) returns (ReplicaPutResponse);
   rpc ReplicaGet(ReplicaGetRequest) returns (ReplicaGetResponse);
   rpc Gossip(GossipMessage) returns (GossipMessage);
+  rpc CompareTree(TreeRoot) returns (TreeBuckets);          // phase 4, anti-entropy
+  rpc ExchangeBuckets(BucketData) returns (BucketData);     // phase 4, anti-entropy
 }
 
 message ForwardRequest {
@@ -157,4 +159,25 @@ message Member {
 message GossipMessage {
   string sender = 1;
   repeated Member members = 2;
+}
+
+// ---------- Merkle anti-entropy (D6c) ----------
+
+message TreeRoot {
+  string sender = 1;
+  string ring_fingerprint = 2;
+  bytes root = 3;                       // sha256 of the 256 bucket hashes
+}
+message TreeBuckets {
+  bool same = 1;                        // true: roots equal (or rings differ) -> nothing to do
+  repeated bytes buckets = 2;           // 256 bucket hashes, only when same = false
+}
+message KeyVersions {
+  string key = 1;
+  repeated Version versions = 2;        // every version, tombstones included
+}
+message BucketData {
+  string sender = 1;
+  repeated uint32 buckets = 2;          // bucket ids being exchanged
+  repeated KeyVersions entries = 3;     // sender's keys in those buckets
 }

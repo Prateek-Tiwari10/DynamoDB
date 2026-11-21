@@ -33,6 +33,7 @@ class ClusterConfig:
     suspect_after_ms: int = 5000
     dead_after_ms: int = 10000
     handoff_retry_ms: int = 5000
+    anti_entropy_ms: int = 10000     # one Merkle sync round with one partner
     vclock_max_entries: int = 10
     snapshot_every: int = 1000
     sloppy_quorum: bool = True
@@ -73,6 +74,8 @@ def _validate(config: ClusterConfig, path: str) -> None:
         raise ValueError(f"{path}: r={config.r} must be between 1 and n={config.n}")
     if not 1 <= config.w <= config.n:
         raise ValueError(f"{path}: w={config.w} must be between 1 and n={config.n}")
+    if config.anti_entropy_ms <= 0:
+        raise ValueError(f"{path}: anti_entropy_ms must be > 0, got {config.anti_entropy_ms}")
     if not config.suspect_after_ms < config.dead_after_ms:
         raise ValueError(f"{path}: suspect_after_ms ({config.suspect_after_ms}) must be less "
                          f"than dead_after_ms ({config.dead_after_ms})")

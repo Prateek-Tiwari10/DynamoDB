@@ -45,6 +45,7 @@ def test_defaults_when_only_nodes_given(tmp_path):
     ("w: 0\n", "w=0"),
     ("n: 4\n", "n=4"),
     ("suspect_after_ms: 10000\n", "suspect_after_ms"),
+    ("anti_entropy_ms: 0\n", "anti_entropy_ms"),
     ("snapshot_evry: 5\n", "unknown setting"),
 ])
 def test_config_validation(tmp_path, extra, message):
