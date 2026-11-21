@@ -2,6 +2,9 @@
 
 D6 has three parts, built and pushed in order: **6a gossip + failure detector** → 6b hinted handoff → 6c Merkle anti-entropy (DEC-12).
 
+> **6b moved to Meet on 2026-11-21 (DEC-14).** Design and as-built: `.team/design/D6b-hinted-handoff.md`, row D6b in PROGRESS.
+> This doc keeps 6a (built) and 6c (to be designed).
+
 This file is updated as each part is decided. **Only 6a is decided. Implement only 6a.**
 
 Note: this file is a design/instructions note — do NOT commit it to the code repo. Save it as `.team/design/D6-failure-detection.md` (notes commit) before coding.

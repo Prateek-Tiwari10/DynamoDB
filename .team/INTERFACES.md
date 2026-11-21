@@ -150,7 +150,7 @@ async def send_gossip(membership, peer_id: str, msg: GossipMessage) -> GossipMes
 - No `on_contact(sender)`: only gossip updates liveness (DEC-03).
 - `MemberState`, `Member`, `GossipMessage` are the proto messages.
 
-## handoff.py (Prateek) — FINAL signatures, logic in D9
+## handoff.py (Meet since DEC-14) — FINAL signatures, logic in D6b
 
 ```python
 class Handoff:
@@ -191,7 +191,7 @@ Meet's signatures are in section 4 of `.team/design/D0-M-contracts.md` and are f
 | `build_node` | `Storage(data_dir, config)`, `Membership(self_id, config, peers, ring_fingerprint)`, `Handoff(self_id, config, storage, membership, peers)` |
 | `Node.start()` | `storage.load()` before the port is bound, then `membership.start()`, `handoff.start()` |
 | `Node.stop()` | `membership.stop()`, `handoff.stop()`, `storage.close()` last |
-| `ReplicaPut` handler | `storage.apply(key, version)`; with `hint_for` set → `storage.put_hint` (D9) |
+| `ReplicaPut` handler | `storage.apply(key, version)`; with `hint_for` set → `storage.put_hint` (D6b) |
 | `ReplicaGet` / `LocalGet` handlers | `storage.get(key)` |
 | `ClusterInfo` handler | `storage.counts()`, `membership.members()` |
 | `Coordinator._route_order` | `membership.state(node_id)` |

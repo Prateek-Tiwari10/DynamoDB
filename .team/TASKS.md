@@ -26,7 +26,7 @@ and why — that is what interviewers ask.
 | 1 | D1 Storage engine (WAL + snapshot) | D2 Single-node server + CLI | Phase 1 demo |
 | 2 | D3 Vector clocks & reconciliation | D4 Ring + static cluster + Docker | — |
 | 3 | D6 Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy (DEC-12) | D5 Coordinator: forwarding + quorum | Phase 2 demo |
-| 4 | (D6 continues: 6b, 6c) | D7 Read repair + membership-aware routing | Phase 3 demo |
+| 4 | (D6 continues: 6c; 6b moved to Meet, DEC-14) | D7 Read repair + membership-aware routing | Phase 3 demo |
 | 5 | D10 Chaos + cluster test suite | D8 Sloppy quorum | Phase 4 demo |
 | 6 | D12 Demo runbook + README + interview notes | D11 Benchmarks + graphs | Final demo |
 | opt | (S1 Merkle moved into D6c) | S2 Live dashboard | — |
@@ -298,7 +298,7 @@ own tests, so Meet is never blocked by a later part:
 | Part | What | Unblocks |
 |---|---|---|
 | **6a** | Membership + gossip + failure detector | Meet's D7 (routing needs node states) |
-| **6b** | Hinted handoff: hint store in storage + delivery loop | Meet's D8 (sloppy quorum writes hints); D10 |
+| **6b** | Hinted handoff: hint store in storage + delivery loop — **Meet, DEC-14** | Meet's D8 (sloppy quorum writes hints); D10 |
 | **6c** | Merkle anti-entropy between replicas | D10 chaos tests, demo |
 
 **Files:** `dynamo/membership.py`, `dynamo/gossip.py`, `dynamo/handoff.py`, hint functions in
