@@ -13,6 +13,7 @@ import grpc
 import yaml
 
 from dynamo import dynamo_pb2, dynamo_pb2_grpc
+from dynamo.antientropy import AntiEntropy
 from dynamo.config import ClusterConfig, load_config, setup_logging
 from dynamo.coordinator import Coordinator, request_budget
 from dynamo.handoff import Handoff
@@ -43,11 +44,12 @@ class Node:
     membership: Membership
     coordinator: Coordinator
     handoff: Handoff
+    anti_entropy: AntiEntropy
     server: grpc.aio.Server
     port: int = 0  # asked-for port until start(); the bound port after it (0 = any free port)
 
     async def start(self) -> None:
-        """Recover storage, then open the port, then start gossip and hint delivery."""
+        """Recover storage, then open the port, then start gossip, hint delivery and anti-entropy."""
         self.storage.load()
         bound = self.server.add_insecure_port(f"0.0.0.0:{self.port}")
         if bound == 0:
@@ -56,12 +58,14 @@ class Node:
         await self.server.start()
         await self.membership.start()
         await self.handoff.start()
+        await self.anti_entropy.start()
 
     async def stop(self) -> None:
         """Stop serving, stop the loops, finish background work, close channels, close storage."""
         await self.server.stop(STOP_GRACE_S)
         await self.membership.stop()
         await self.handoff.stop()
+        await self.anti_entropy.stop()
         await self.coordinator.drain(STOP_GRACE_S)
         await self.peers.close()
         await self.storage.close()
@@ -77,11 +81,13 @@ def build_node(config: ClusterConfig, node_id: str, port: int, data_dir: str) ->
     membership = Membership(node_id, config, peers, ring.fingerprint(config.n))
     coordinator = Coordinator(node_id, config, ring, storage, peers, membership)
     handoff = Handoff(node_id, config, storage, membership, peers)
+    anti_entropy = AntiEntropy(node_id, config, storage, ring, membership, peers)
     # No SO_REUSEPORT: a second node on a port that is already taken must fail to start,
     # not silently share the port with the first one.
     server = grpc.aio.server(options=[("grpc.so_reuseport", 0)])
     node = Node(node_id=node_id, config=config, storage=storage, ring=ring, peers=peers,
                 membership=membership, coordinator=coordinator, handoff=handoff,
+                anti_entropy=anti_entropy,
                 server=server, port=port)
     dynamo_pb2_grpc.add_KVStoreServicer_to_server(KVStoreServicer(node), server)
     dynamo_pb2_grpc.add_NodeServiceServicer_to_server(NodeServiceServicer(node), server)

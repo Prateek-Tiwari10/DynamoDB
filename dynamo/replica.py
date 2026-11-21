@@ -53,3 +53,13 @@ class NodeServiceServicer(dynamo_pb2_grpc.NodeServiceServicer):
     async def Gossip(self, request, context):
         """Merge the sender's membership table and reply with ours."""
         return self._node.membership.on_gossip(request)
+
+    @rpc_handler("node")
+    async def CompareTree(self, request, context):
+        """Compare Merkle roots for the keys we share with the sender (6c)."""
+        return self._node.anti_entropy.on_compare(request)
+
+    @rpc_handler("node")
+    async def ExchangeBuckets(self, request, context):
+        """Swap the keys of the differing buckets (6c)."""
+        return await self._node.anti_entropy.on_exchange(request)
