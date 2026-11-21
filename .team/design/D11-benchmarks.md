@@ -1,6 +1,6 @@
 # D11 — Benchmarks + graphs
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-21
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-21
 
 ## 1. Requirement
 From TASKS.md / SPEC "Testing and benchmarks":
@@ -153,4 +153,21 @@ for a quick check.
    the numbers look better.
 
 ## 9. As built
-<filled after implementation>
+Built as designed (`tools/bench.py`, `tests/test_bench.py` 18 tests, results in `results/`). Changes:
+1. Run as `python -m tools.bench`, not `python tools/bench.py`: the script imports the `dynamo`
+   package, which needs the project root on the path.
+2. Node data goes to `~/.cache/dynamo-bench` (`--work-dir`), not the system temp folder: `/tmp` is
+   tmpfs on this laptop, where fsync is free (1 node: ~3000 ops/s on tmpfs vs ~1300 on the SSD).
+   `./data` was not usable either: Docker created it as root.
+3. Nodes run with `LOG_LEVEL=WARNING` so logging does not take part in the measurement.
+4. Killed nodes' client channels are closed only at the end: closing one at once cancelled
+   requests still in flight on it (CancelledError, not an RPC error) and crashed the first full run's
+   timeline. Test added.
+5. matplotlib is only in my venv until DEC-16 is agreed; `plot` says how to install it if missing.
+
+Results (`results/README.md`): p50 follows the quorum size (5.3 ms at R/W=1, ~10–11 ms at 2–3);
+throughput differences between quorum settings are inside the laptop's run-to-run noise (±25 %);
+only R/W=3 settings had QUORUM_FAILED; 1 node is the fastest (no replication); with 1 of 5 nodes
+DEAD, (3,2,2) serves everything at ~10 % lower throughput. **Found:** the restart of a killed node
+drops throughput from ~800 to 30–200 ops/s for ~20 s with p99 1–3 s (likely hinted handoff + read
+repair + anti-entropy all landing on it at once, one fsync each; cause not isolated; REVIEW-LATER #19).

@@ -34,6 +34,9 @@ of copying what a production system like Dynamo or Cassandra does.
 | 15 | D6 (6a gossip + 6c Merkle anti-entropy): `membership.py`, `gossip.py`, `merkle.py`, `antientropy.py`, `storage.keys()`, tests, design doc §1–§21 + both "As built" | Prateek | Meet | 2026-11-21 | DEC-13, DEC-15 (Meet to confirm); deviations in the two As-built sections |
 | 16 | Prateek's edits to Meet's `server.py` and `replica.py` for 6c (commit `22675ff`): `anti_entropy` wiring + `CompareTree` / `ExchangeBuckets` handlers | Prateek | Meet | 2026-11-21 | exactly the D6 §17 lines |
 | 17 | Known limits from 6c: (a) `ExchangeBuckets` of 32 buckets with 1 MiB values can pass gRPC's 4 MB limit (cap by bytes or raise the limit?); (b) Python 3.14 + grpcio 1.84 venv: full suite sometimes segfaults in grpc GC (also before 6c) — try a 3.11 venv like Docker | Prateek | both | 2026-11-21 | not a bug in our logic; decide after the first full version |
+| 18 | D11 benchmarks: `tools/bench.py`, `tests/test_bench.py`, `results/` (README with takeaways) | Meet | Prateek | 2026-11-21 | deviations in D11 §9; DEC-16 matplotlib still open |
+| 19 | Found by D11 timeline: after a killed node restarts, throughput drops ~5–20x for ~20 s, p99 1–3 s (`results/timeline.png`). Candidates: hinted handoff (one ReplicaPut + fsync per hint, all owners' stand-ins at once), read repair on every stale key, anti-entropy round. Measure each (turn one off at a time) before fixing | Meet | both | 2026-11-21 | not fixed in D11 (measurement task); touches handoff.py (Meet), storage fsync (Prateek), antientropy (Prateek) |
+| 20 | Full suite in one process segfaults in grpc GC on Python 3.14 (2 of 2 runs today); split in two halves it passes: 400 passed, 1 skipped. Same as #17b | Meet | both | 2026-11-21 | Prateek's venv is on 3.12 now (D10 row) — I will try that too |
 
 ## Done
 
