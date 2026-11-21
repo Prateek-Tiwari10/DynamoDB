@@ -96,3 +96,12 @@ Why: (1) states are each node's own opinion (never gossiped), so "seeing itself 
 Rejected: gossiping states (SWIM) — needs rules on who may overrule whom. Persisting the last incarnation to disk — more code; refutation covers the same cases.
 Affects: SPEC (gossip merge rule, settings table, phase-3 text "ALIVE → SUSPECT (3 s)"), `dynamo/config.py`, `cluster.yaml`, `cluster.local.yaml`, INTERFACES config block; D5 unaffected (SUSPECT only reorders routes).
 
+## DEC-14 — Part 6b (hinted handoff) moves from Prateek to Meet  (2026-11-21, agreed by Prateek + Meet)
+Decision: Meet designs and builds 6b, tracked as its own row **D6b** with its own design doc
+`.team/design/D6b-hinted-handoff.md`. Meet owns `dynamo/handoff.py`. In `dynamo/storage.py` Meet
+adds the hint parts only: `put_hint`, `hints`, `drop_hint`, and the hint handling in log replay and
+in the snapshot; everything else in `storage.py` stays Prateek's, and Prateek reviews the hint
+changes. The frozen signatures in INTERFACES do not change. 6a and 6c stay with Prateek.
+Why: D8 (sloppy quorum, Meet) sends the hinted writes and 6b stores and delivers them; one owner
+designs both sides so they match (above all: are hints visible to reads?). Prateek keeps 6c and D10.
+

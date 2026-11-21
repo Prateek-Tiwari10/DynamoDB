@@ -51,8 +51,8 @@ commit. The notes are removed from the repo before submission.
 | Owner | Files |
 |---|---|
 | Shared — change only after both agree, log in `.team/DECISIONS.md` | `proto/dynamo/dynamo.proto`, `dynamo/config.py`, `cluster.yaml`, `.team/INTERFACES.md`, `.team/SPEC.md`, `Makefile`, `requirements.txt`, `pyproject.toml` |
-| Prateek | `dynamo/storage.py`, `dynamo/vclock.py`, `dynamo/version.py`, `dynamo/membership.py`, `dynamo/gossip.py`, `dynamo/handoff.py`, `tools/chaos.py`, `tests/cluster/`, `README.md`, `.team/DEMO.md` |
-| Meet | `dynamo/server.py`, `dynamo/replica.py`, `dynamo/peers.py`, `dynamo/ring.py`, `dynamo/coordinator.py`, `client/cli.py`, `docker-compose.yml`, `Dockerfile`, `tools/bench.py` |
+| Prateek | `dynamo/storage.py` (except the hint parts, DEC-14), `dynamo/vclock.py`, `dynamo/version.py`, `dynamo/membership.py`, `dynamo/gossip.py`, `tools/chaos.py`, `tests/cluster/`, `README.md`, `.team/DEMO.md` |
+| Meet | `dynamo/server.py`, `dynamo/replica.py`, `dynamo/peers.py`, `dynamo/ring.py`, `dynamo/coordinator.py`, `dynamo/handoff.py` (DEC-14), the hint parts of `dynamo/storage.py` (DEC-14), `client/cli.py`, `docker-compose.yml`, `Dockerfile`, `tools/bench.py` |
 | Everyone | own test files `tests/test_<module>.py`, own design docs, own rows in `.team/PROGRESS.md` |
 
 ---
@@ -325,6 +325,8 @@ Expose the `Membership` interface from D0, including `subscribe` (handoff needs 
 by ~3 s and DEAD by ~10 s; restart → ALIVE again; `kv info` shows states.
 
 ### 6b — Hinted handoff store + delivery
+
+> **Moved to Meet on 2026-11-21 (DEC-14).** Design doc: `.team/design/D6b-hinted-handoff.md`; tracked as row D6b in PROGRESS.
 
 **Requirement.** Stand-ins persist hints (survive restart), retry delivery every `handoff_retry_ms` to
 owners that are ALIVE, delete only after the owner acks. Storage signatures are already frozen in
