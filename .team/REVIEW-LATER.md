@@ -29,6 +29,7 @@ of copying what a production system like Dynamo or Cassandra does.
 | 10 | D0-P rest: `gossip.py` stub, shared test cluster `tests/conftest.py`, `tests/test_cluster_harness.py` | Prateek | Meet | 2026-11-21 | 5 questions answered in D0-P §9; kill also cancels coordinator tasks; suggestion for Meet: `grpc.so_reuseport = 0` in `build_node` |
 | 11 | Prateek's edit to Meet's `tests/test_server.py` (commit `685c1bf`): Gossip-unimplemented test → Gossip answers with table | Prateek | Meet | 2026-11-21 | needed because 6a built the Gossip RPC |
 | 12 | D7 read repair + DEAD-aware routing: `repair_plan`, `_repair`, `_reachable`, `_wait_for` returns late tasks, `test_read_repair.py`, `demo_phase3.sh`; also the `so_reuseport = 0` fix + test (commit `874682d`) | Meet | Prateek | 2026-11-21 | Q5: fast fail counts only ALIVE (Meet); deviations in D7 §9 |
+| 13 | D6b hinted handoff: hint parts of `storage.py` (`put_hint`, `hints`, `drop_hint`, replay, `hints.json`), `handoff.py` loop, `replica.py` hinted ReplicaPut, tests | Meet | Prateek | 2026-11-21 | touches Prateek's `storage.py` (DEC-14); deviation: `hints.json` instead of snapshot format 2 (D6b §9) |
 
 ## Done
 

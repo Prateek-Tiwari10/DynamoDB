@@ -1,6 +1,6 @@
 # D6b — Hinted handoff: hint store + delivery loop
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-21
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-21
 
 > Confirmed by Meet on 2026-11-21 (all recommended options). Part 6b of D6 (DEC-12), moved
 > from Prateek to Meet (DEC-14). Uses the frozen
@@ -149,4 +149,39 @@ class Handoff:
    owner, read repair fixes keys that are read, Merkle anti-entropy fixes everything else.
 
 ## 9. As built
-<filled after implementation>
+Built 2026-11-21 in `dynamo/storage.py` (hint parts only, DEC-14), `dynamo/handoff.py`,
+`dynamo/replica.py`, tests `tests/test_storage_hints.py`, `tests/test_handoff.py`,
+`tests/test_handoff_cluster.py`, and two tests in `tests/test_server.py`.
+
+**Deviation from Q4: hints in their own `hints.json`, not in a "format 2" snapshot.**
+`snapshot.json` keeps exactly its old format (key -> versions). The same snapshot step writes
+`hints.json.tmp` next to `snapshot.json.tmp` (both inside `_write_snapshot_tmp`), renames
+`snapshot.json` then `hints.json`, fsyncs the folder, and only then clears the log. Why: Prateek's
+`test_snapshot_clears_log` reads `snapshot.json` as key -> versions, and his crash tests pause
+right after `_write_snapshot_tmp`; this way neither his tests nor the data format change, and old
+data folders need no format check (no `hints.json` = no hints). A crash between the two renames
+leaves new data + old hints + the full log; replaying the log rebuilds the hints (merging a hint
+twice or dropping a missing one does nothing) — tested.
+
+**Other small points**
+- `decode_record(line)` is new and used by replay; it returns `("put", key, version, hint_for)` or
+  `("drop_hint", owner, key, clock)`. `decode_line` is kept with its old meaning (put lines only)
+  and now calls `decode_record`.
+- The log write and the "count a line, snapshot every N" steps of `apply` moved into two helpers
+  (`_write_line(line, fsync)`, `_count_line()`), shared by `apply`, `put_hint` and `drop_hint`.
+  `apply` behaves exactly as before (all of Prateek's storage and crash tests pass unchanged).
+- `Handoff.deliver_once()` is public (tests call it); the loop catches and logs any error in a
+  round so one bad round never stops delivery.
+- `ReplicaPut` with `hint_for` equal to the receiving node is stored as normal data.
+- Not handled (out of scope, Q3): a `hint_for` that is not a node in the config would be kept
+  forever. Only D8's coordinator sends hints, and it only names nodes from the ring.
+
+**Tests:** 8 storage hint tests, 6 handoff unit tests, 3 cluster tests, 2 server tests (the old
+"hinted ReplicaPut is UNIMPLEMENTED" test replaced). Full suite: **331 passed, 1 skipped**.
+Checked that the tests catch real breakage: with the loop's `deliver_once` call removed, 3 tests
+fail; with replay ignoring `hint_for` (the old bug: hints became data after a restart), 4 fail.
+
+**Done-when check:** in-process cluster: owner killed, hint sent to a stand-in, owner restarted →
+owner has the value and the stand-in has no hints within the 8 s wait (in practice < 1 s with the
+300 ms test timer); same after a stand-in crash + restart. End to end through a client Put comes
+with D8.
