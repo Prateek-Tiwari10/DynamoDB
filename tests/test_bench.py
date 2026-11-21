@@ -163,6 +163,18 @@ async def test_run_load_measures_only_after_warmup():
     assert cpu >= 0.0
 
 
+async def test_forget_channel_keeps_the_old_channel_open_until_stop(tmp_path):
+    cluster = bench.LocalCluster(1, 1, str(tmp_path))
+    cluster.stub("node1")
+    old = cluster._channels["node1"]
+    cluster.forget_channel("node1")
+    cluster.stub("node1")
+    assert cluster._channels["node1"] is not old       # a fresh channel for the restarted node
+    assert cluster._retired == [old]                   # in-flight calls on the old one survive
+    await cluster.stop()
+    assert cluster._retired == []
+
+
 # ---------- against the in-process cluster ----------
 
 async def test_short_run_on_the_test_cluster(cluster):

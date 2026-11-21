@@ -269,6 +269,7 @@ class LocalCluster:
                           for i, node_id in enumerate(node_ids(nodes))}
         self._procs: dict[str, subprocess.Popen] = {}
         self._channels: dict[str, grpc.aio.Channel] = {}
+        self._retired: list[grpc.aio.Channel] = []   # channels of killed nodes, closed in stop()
 
     def start(self, node_id: str | None = None) -> None:
         """Start one node, or all of them."""
@@ -289,9 +290,10 @@ class LocalCluster:
 
     async def stop(self) -> None:
         """Close client channels, SIGTERM every node, SIGKILL any still running after 10 s."""
-        for channel in self._channels.values():
+        for channel in [*self._channels.values(), *self._retired]:
             await channel.close()
         self._channels.clear()
+        self._retired.clear()
         for proc in self._procs.values():
             proc.terminate()
         for proc in self._procs.values():
@@ -308,11 +310,16 @@ class LocalCluster:
             self._channels[node_id] = grpc.aio.insecure_channel(self.addresses[node_id])
         return dynamo_pb2_grpc.KVStoreStub(self._channels[node_id])
 
-    async def forget_channel(self, node_id: str) -> None:
-        """Drop the channel of a killed node."""
+    def forget_channel(self, node_id: str) -> None:
+        """Stop handing out the channel of a killed node; a restart gets a fresh one.
+
+        The old channel is closed only in ``stop()``: closing it now would cancel requests that
+        workers still have in flight on it, and a cancelled call raises CancelledError, not an
+        RPC error.
+        """
         channel = self._channels.pop(node_id, None)
         if channel is not None:
-            await channel.close()
+            self._retired.append(channel)
 
     def running(self) -> list[str]:
         """Ids of the nodes whose process is running."""
@@ -416,7 +423,7 @@ async def kill_and_wait_dead(cluster: LocalCluster, stubs: dict, targets: list,
     """SIGKILL ``node_id``, take it out of the clients' targets, wait until the rest see DEAD."""
     targets.remove(stubs.pop(node_id))
     cluster.kill(node_id)
-    await cluster.forget_channel(node_id)
+    cluster.forget_channel(node_id)
     started = time.monotonic()
     await wait_for(lambda: all_see(stubs, node_id, dynamo_pb2.DEAD), f"{node_id} DEAD", 30)
     print(f"  {node_id} killed, seen as DEAD by all after {time.monotonic() - started:.1f} s")
@@ -435,7 +442,7 @@ async def run_timeline(cluster: LocalCluster, stubs: dict, targets: list,
         await asyncio.sleep(max(0.0, measure_start + TIMELINE_KILL_AT_S - time.monotonic()))
         targets.remove(stubs.pop(KILLED_NODE))
         cluster.kill(KILLED_NODE)
-        await cluster.forget_channel(KILLED_NODE)
+        cluster.forget_channel(KILLED_NODE)
         events[TIMELINE_KILL_AT_S] = f"kill {KILLED_NODE}"
         await asyncio.sleep(max(0.0, measure_start + TIMELINE_RESTART_AT_S - time.monotonic()))
         cluster.start(KILLED_NODE)
@@ -699,6 +706,7 @@ async def run_all(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Entry point."""
     args = parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)    # progress lines show up at once in a log file
     if args.command == "plot":
         plot_all(args.out)
     else:
