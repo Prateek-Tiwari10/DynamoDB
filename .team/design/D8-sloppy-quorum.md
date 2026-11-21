@@ -1,6 +1,6 @@
 # D8 — Sloppy quorum
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-21
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-21
 
 > Confirmed by Meet on 2026-11-21 (Q3 strict reads, Q5 SUSPECT owners get a stand-in). Builds on D5
 > (coordinator), D7 (DEAD-aware fan-out, fast fail counts only ALIVE) and D6b (stand-ins keep
@@ -155,4 +155,40 @@ async def _replicate(self, key, version, targets: list[tuple[str, str]], w, dead
    copies, and one of them was a hint.
 
 ## 9. As built
-<filled after implementation>
+Built 2026-11-21 in `dynamo/coordinator.py`, `tests/test_coordinator.py`,
+`tests/test_sloppy_quorum.py`, `tools/demo_sloppy.sh`; `tests/test_read_repair.py` and
+`tools/demo_phase3.sh` adjusted.
+
+**As designed:** `_targets(key, replicas)` and `_stand_ins(key, replicas, count)` exactly as in
+section 4; `_replicate` takes `(node, hint_for)` targets; `_replica_put` got `hint_for=""`.
+Fast fail in `_write` is `ALIVE owners + stand-ins < W`, which with the flag off is the D7 rule
+(no stand-ins). Reads, read repair and forwarding are unchanged.
+
+**Small points**
+- With 2 owners down there are 2 stand-ins; `written_to` lists the coordinator plus whichever
+  stand-in acked first (W=2), the other finishes in the background. Live run:
+  `written_to: node1, node5, node2` (the third ack arrived within the same wait).
+- Tests about D5/D7 routing now say so: unit tests use a `FIVE_STRICT` config, and
+  `tests/test_read_repair.py` overrides the `cluster` fixture with `sloppy_quorum=False`; with it on,
+  a stand-in's hint could reach the stale replica before the read and hide what is tested.
+- `tools/demo_phase3.sh` step 2 now makes the replica stale with a short outage (kill, write at
+  once, start, before gossip suspects it). After a long outage the stand-in hands the write over
+  itself, which is what `tools/demo_sloppy.sh` shows.
+- `tools/demo_phase2.sh` is unchanged and still passes: its "2 replicas down → QUORUM FAILED"
+  write comes right after the kills, while gossip still sees the owners as ALIVE, so no stand-in is
+  used. After ~5 s (SUSPECT) the same write would succeed through stand-ins.
+- While building, the full suite crashed with a grpc segfault on Python 3.14: a D5 unit test whose
+  fake had `peers=None` now reached the stand-in path, and the failing background tasks it left
+  behind crashed a later test. Fixed by making that test strict (it is about D5 routing); the
+  suite then passed 3 runs in a row.
+
+**Tests:** 9 new unit tests (stand-in choice, pairing, SUSPECT gets a stand-in, flag off = D7,
+hints sent and counted, fast fail with stand-ins, all owners down, reads strict) and 3 cluster
+tests (SPEC cluster test 3: flag off → `QUORUM_FAILED`; test 4: flag on → OK, stand-in has a hint,
+not data; owners get the write back after restart; reads stay strict). Full suite: **343 passed,
+1 skipped**. With the stand-in path switched off, 6 tests fail.
+
+**Demos (local cluster):** `tools/demo_sloppy.sh` PASSED (2 owners killed, put OK via node1 +
+stand-in node5, `local-get` on node5 NOT FOUND, R=2 QUORUM FAILED / R=1 book, owners restarted and
+holding `book` within ~1 s of being ALIVE). `demo_phase3.sh` and `demo_phase2.sh` PASSED again.
+Docker runs (`DOCKER=1`) to be done by Meet.

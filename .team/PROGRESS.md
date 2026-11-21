@@ -17,7 +17,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | **6a built and pushed** (gossip + failure detector; 292 tests pass; live: SUSPECT ~5 s, DEAD ~10 s); next: design 6b |
 | D7 | Read repair + membership-aware routing | Meet | REVIEW | .team/design/D7-read-repair.md | 2026-11-21 | Phase 3 demo passes locally; 313 tests pass |
 | D6b | Hinted handoff: hint store + delivery loop (moved from Prateek, DEC-14) | Meet | REVIEW | .team/design/D6b-hinted-handoff.md | 2026-11-21 | built; 331 tests pass; hints in own `hints.json` (see §9) |
-| D8 | Sloppy quorum | Meet | IMPLEMENTING | .team/design/D8-sloppy-quorum.md | 2026-11-21 | design confirmed (strict reads; SUSPECT owners get a stand-in) |
+| D8 | Sloppy quorum | Meet | REVIEW | .team/design/D8-sloppy-quorum.md | 2026-11-21 | built; 343 tests pass; `demo_sloppy.sh` passes locally |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
 | D11 | Benchmarks + graphs | Meet | TODO | — | 2026-10-23 | |
@@ -26,7 +26,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D6a done; next design 6b (hinted handoff), then 6c. D0-P, D1, D3 in REVIEW
-- **Meet:** D8 implementing (sloppy quorum); D6b, D7, D0-M, D2, D4, D5 in REVIEW
+- **Meet:** D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW; next: D11 benchmarks
 
 ## Blockers / questions for the partner
 
@@ -43,6 +43,7 @@ _(add a line, remove it when answered)_
 - **Meet → Prateek (2026-11-21):** **D7 is on main** (REVIEW). Things that touch you: (1) fan-out now skips nodes your membership says are DEAD (SUSPECT still asked); fast fail still counts only ALIVE. (2) `_wait_for` returns `(answers, late)` now, so if 6b code calls it, unpack two values. (3) `tests/test_read_repair.py` uses your `cluster` fixture; it reads again until the repair shows up, because right after `restart` the node can still be DEAD in the coordinator's view for ~1 s. (4) New `tools/demo_phase3.sh` (failure detection, read repair, siblings).
 - **Meet → Prateek (2026-11-21):** as agreed, I took **6b** (DEC-14, please read): row D6b, own design doc, I own `handoff.py` and only the hint parts of your `storage.py` (put_hint / hints / drop_hint, hint lines in replay, hints in the snapshot); you review those. I did not touch your D6 row or D6 doc; please mark 6b there as moved to Meet.
 - **Meet → Prateek (2026-11-21):** **D6b is on main** (REVIEW, REVIEW-LATER #13). In your `storage.py` I added only the hint parts; to keep your snapshot format and your tests unchanged, hints go to their own `hints.json` written in the same snapshot step (D6b §9). I also moved the log-write and line-count steps of `apply` into two small helpers shared with the hint functions; all your storage and crash tests pass unchanged. INTERFACES still says handoff.py is yours / "logic in D9" — shared file, OK if I update it to DEC-14?
+- **Meet → Prateek (2026-11-21):** **D8 is on main** (REVIEW, REVIEW-LATER #14). For your D10 cluster tests 3/4: with `sloppy_quorum` on, every owner that is not ALIVE (SUSPECT too, my choice) gets a stand-in; reads stay strict (owners only, R real copies). A test that wants the D5/D7 behaviour must use `make_cluster(5, sloppy_quorum=False)` — a write ~0.5 s after a kill in test timers goes through stand-ins. New `tools/demo_sloppy.sh`.
 
 ## Log
 
@@ -96,3 +97,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 11:59  Meet  D6b  IMPLEMENTING → REVIEW  (hint store + delivery loop; 331 tests pass)
 - 2026-11-21 12:03  Meet  D8  TODO → DESIGNING
 - 2026-11-21 12:10  Meet  D8  DESIGNING → DESIGNED → IMPLEMENTING  (confirmed by Meet)
+- 2026-11-21 12:20  Meet  D8  IMPLEMENTING → REVIEW  (stand-ins, demo_sloppy.sh; 343 tests pass)

@@ -182,7 +182,7 @@ Meet: D0-M, D2, D4, D5 in REVIEW; D7 can start now.
 
 **Next step:** design 6b (hinted handoff) in the design chat, then 6c (Merkle).
 
-## Session 8 — 2026-11-21 · Meet · D2, D4, D5 built; DEC-12/13 confirmed; D7 and D6b built
+## Session 8 — 2026-11-21 · Meet · D2, D4, D5 built; DEC-12/13 confirmed; D7, D6b and D8 built
 
 **Done:**
 - D2 single node, D4 static cluster, D5 coordinator (routing, forwarding, quorum loop) designed,
@@ -194,13 +194,16 @@ Meet: D0-M, D2, D4, D5 in REVIEW; D7 can start now.
   fan-out skips DEAD replicas. 20 new tests; full suite 313 passed, 1 skipped.
   `tools/demo_phase3.sh` passes on the local cluster.
 
-**State left:** Meet: D0-M, D2, D4, D5, D7, D6b in REVIEW (REVIEW-LATER #5–#8, #12, #13). Docker run of the
+**State left:** Meet: D0-M, D2, D4, D5, D7, D6b, D8 in REVIEW (REVIEW-LATER #5–#8, #12–#14). Docker run of the
 Phase 3 demo still to do by Meet.
 
 - 6b hinted handoff moved from Prateek to Meet (DEC-14, Prateek agreed). D6b designed (all
   recommended options) and built: hints kept apart from own data (log + `hints.json`), delivery
   loop every 5 s and on "owner ALIVE", delete after ack. 331 passed, 1 skipped.
 
-**Next step:** D8 sloppy quorum (D6b is in now); its read answer must match D6b Q6 (hints are not
-visible to reads).
+- D8 sloppy quorum designed (strict reads; SUSPECT owners get a stand-in) and built:
+  stand-ins from `ring.walk`, hinted ReplicaPut, fast fail counts stand-ins. 343 passed, 1 skipped.
+  `demo_sloppy.sh`, `demo_phase3.sh`, `demo_phase2.sh` pass locally.
+
+**Next step:** Docker runs of the Phase 3 and sloppy demos (Meet); then D11 benchmarks.
 
