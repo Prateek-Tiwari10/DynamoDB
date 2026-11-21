@@ -15,7 +15,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D4 | Ring + static cluster + Docker | Meet | REVIEW | .team/design/D4-static-cluster.md | 2026-11-21 | local and Docker 5-node cluster checked (`CLUSTER OK`, also after kill + restart of node3); REVIEW-LATER #7 |
 | D5 | Coordinator: forwarding + quorum | Meet | REVIEW | .team/design/D5-coordinator.md | 2026-11-21 | Phase 2 demo passes locally and in Docker; 244 tests; REVIEW-LATER #8 |
 | D6 | Failure detection + replica sync: 6a gossip, 6b hinted handoff, 6c Merkle anti-entropy | Prateek | IMPLEMENTING | .team/design/D6-failure-detection.md | 2026-11-21 | **6a built and pushed** (gossip + failure detector; 292 tests pass; live: SUSPECT ~5 s, DEAD ~10 s); next: design 6b |
-| D7 | Read repair + membership-aware routing | Meet | TODO | — | 2026-10-23 | |
+| D7 | Read repair + membership-aware routing | Meet | DESIGNING | .team/design/D7-read-repair.md | 2026-11-21 | draft being written |
 | D8 | Sloppy quorum | Meet | TODO | — | 2026-10-23 | |
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | TODO | — | 2026-10-23 | |
@@ -25,7 +25,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 ## Currently
 
 - **Prateek:** D6a done; next design 6b (hinted handoff), then 6c. D0-P, D1, D3 in REVIEW
-- **Meet:** next: D7 read repair + routing (needs D6) or D11 benchmarks (D0-M, D2, D4, D5 in REVIEW)
+- **Meet:** D7 design (D0-M, D2, D4, D5 in REVIEW)
 
 ## Blockers / questions for the partner
 
@@ -84,3 +84,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 01:21  Prateek  D6  DESIGNING → IMPLEMENTING  (6a designed and saved, DEC-13; 6b and 6c designed later in the same doc)
 - 2026-11-21 01:30  Prateek  D6  6a built and pushed (gossip + failure detector, DEC-13); D6 stays IMPLEMENTING until 6c
 - 2026-11-21 20:00  Meet  DEC-12, DEC-13  confirmed
+- 2026-11-21 20:20  Meet  D7  TODO → DESIGNING
