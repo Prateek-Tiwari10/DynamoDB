@@ -88,6 +88,9 @@
            border: 1px solid var(--line); white-space: nowrap; }
   .badge.owner { border-color: var(--accent); color: var(--accent); }
   .warn { color: var(--dead); font-weight: 600; }
+  .hinted { color: var(--suspect); font-weight: 600; }
+  .cols { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  @media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr); } }
   .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
 </style>
 </head>
@@ -152,6 +155,11 @@
       <div id="keyinfo" class="small">No key selected.</div>
     </section>
   </div>
+  <section class="panel" id="diskpanel" hidden>
+    <h2>What each node stores <span class="small" style="text-transform:none;letter-spacing:0">(read from its files on disk)</span></h2>
+    <div class="chips" id="disktabs"></div>
+    <div id="diskinfo" class="small">Pick a node.</div>
+  </section>
 </main>
 
 <script>
@@ -381,6 +389,11 @@ function renderKey(key) {
       if (i < key.replicas.length && !agree && JSON.stringify(h.versions) !== ownerSigs[0])
         stores.append(el("div", { class: "warn small", text: "differs from replica 1" }));
     }
+    for (const hint of (key.hints || {})[node] || []) {
+      if (!(stores instanceof HTMLDivElement)) stores = el("div", {}, stores);
+      stores.append(el("div", { class: "ver hinted",
+        text: `hint for ${hint.owner}: ${hint.version.tombstone ? "⌫ deleted" : JSON.stringify(hint.version.value)}  ${clockText(hint.version.clock)}` }));
+    }
     table.append(el("tr", {}, el("td", {}, el("span", { class: "swatch", style: `background:${colorOf(node)}` }), " " + node),
                      el("td", {}, role), el("td", {}, stores)));
   });
@@ -388,7 +401,52 @@ function renderKey(key) {
     el("div", { class: "small", text: `ring position ${key.position.toLocaleString()} · replicas ${key.replicas.join(", ")}` +
                                       (agree ? "" : " · replicas disagree (read repair or anti-entropy will fix it)") }),
     el("div", { class: "scroll" }, table),
-    el("div", { class: "hint", text: "Hints held by stand-ins are not visible here (kept apart from a node's own data)." }));
+    el("div", { class: "hint", text: state.status && state.status.config.disk
+      ? "Orange lines are hinted writes: a stand-in keeps them apart from its own data and hands them to the owner when it is back."
+      : "Hints are not shown: start the dashboard with --data-dir on the machine where the nodes keep their data." }));
+}
+
+// ---------- what each node stores ----------
+let diskNode = null, diskBusy = false;
+function renderDiskTabs() {
+  document.getElementById("disktabs").replaceChildren(...state.nodeIds.map(n =>
+    el("button", { type: "button", class: "chip" + (n === diskNode ? " on" : ""), text: n,
+                   onclick: () => { diskNode = n; renderDiskTabs(); refreshDisk(); } })));
+}
+function versionLine(v) {
+  return `${v.tombstone ? "⌫ deleted" : JSON.stringify(v.value)}  ${clockText(v.clock)}`;
+}
+async function refreshDisk() {
+  if (!diskNode || diskBusy) return;
+  diskBusy = true;
+  const box = document.getElementById("diskinfo");
+  try {
+    const r = await fetch("/api/disk?node=" + encodeURIComponent(diskNode), { cache: "no-store" });
+    const d = await r.json();
+    if (!r.ok) { box.textContent = d.error || r.status; return; }
+    const keys = el("table", {}, el("tr", {}, el("th", { text: "key" }), el("th", { text: "role" }), el("th", { text: "versions" })));
+    for (const k of d.keys) {
+      const cell = el("td");
+      k.versions.forEach(v => cell.append(el("div", { class: "ver", text: versionLine(v) })));
+      if (k.versions.length > 1) cell.append(el("div", { class: "warn small", text: "siblings" }));
+      keys.append(el("tr", {}, el("td", {}, el("button", { type: "button", class: "chip", text: k.key, onclick: () => remember(k.key) })),
+                     el("td", {}, el("span", { class: "badge" + (k.replica ? " owner" : ""), text: k.replica ? "replica" : "not a replica" })),
+                     cell));
+    }
+    const hints = el("table", {}, el("tr", {}, el("th", { text: "for owner" }), el("th", { text: "key" }), el("th", { text: "value" })));
+    for (const h of d.hints)
+      hints.append(el("tr", {}, el("td", {}, el("span", { class: "swatch", style: `background:${colorOf(h.owner)}` }), " " + h.owner),
+                    el("td", {}, el("button", { type: "button", class: "chip", text: h.key, onclick: () => remember(h.key) })),
+                    el("td", { class: "ver hinted", text: versionLine(h.version) })));
+    box.replaceChildren(
+      d.error ? el("div", { class: "warn small", text: "read error: " + d.error }) : "",
+      el("div", { class: "cols" },
+        el("div", {}, el("div", { class: "small", text: `${d.key_count} own key(s)` + (d.key_count > d.keys.length ? `, first ${d.keys.length} shown` : "") }),
+           el("div", { class: "scroll" }, d.keys.length ? keys : el("div", { class: "small", text: "no keys" }))),
+        el("div", {}, el("div", { class: "small", text: `${d.hints.length} hint(s) held for other nodes` }),
+           el("div", { class: "scroll" }, d.hints.length ? hints : el("div", { class: "small", text: "no hints (nothing waiting to be handed over)" })))));
+  } catch (e) { box.textContent = "read failed: " + e.message; }
+  finally { diskBusy = false; }
 }
 
 // ---------- polling ----------
@@ -417,7 +475,10 @@ async function tick() {
     if (c.control && !document.getElementById("nodemsg").textContent)
       document.getElementById("nodemsg").textContent = "Node controls are on: Pause makes a node SUSPECT, Kill / Stop make it DEAD, Start / Resume bring it back. Watch the grid.";
     renderCards(); renderGrid();
+    document.getElementById("diskpanel").hidden = !c.disk;
+    if (c.disk && !diskNode) { diskNode = state.nodeIds[0]; renderDiskTabs(); }
     await refreshKey();
+    if (c.disk) refreshDisk();
   } catch (e) {
     document.getElementById("summary").textContent = "dashboard server not reachable";
   }

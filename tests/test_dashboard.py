@@ -334,3 +334,99 @@ async def test_node_endpoint_with_control(dash_with_control):
     code, _ = await client.post("/api/node", {"node": "node1", "action": "kill"},
                                 headers={"Content-Type": "application/json"})
     assert code == 403
+
+
+# ---------- what a node stores, read from disk ----------
+
+def _version(value: bytes, counters: dict[str, int]):
+    from dynamo.vclock import VectorClock
+    from dynamo.version import Version
+    return Version(value=value, clock=VectorClock(counters=counters,
+                                                  updated_ms={n: 1 for n in counters}))
+
+
+async def test_disk_reader_shows_own_keys_and_hints_without_touching_files(tmp_path):
+    from dynamo.storage import Storage
+    config = config_of()
+    folder = tmp_path / "node1"
+    storage = Storage(str(folder), config)
+    storage.load()
+    await storage.apply("cart:1", _version(b"book", {"node1": 1}))
+    await storage.put_hint("node4", "cart:2", _version(b"pen", {"node2": 1}))
+    await storage.close()
+    (folder / "snapshot.json.tmp").write_text("left over")      # load() would delete this
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+
+    reader = dashboard.DiskReader(config, str(tmp_path))
+    assert reader.available()
+    held = await asyncio.to_thread(reader.read, "node1")      # the server reads in a thread
+    assert "error" not in held
+    assert list(held["keys"]) == ["cart:1"] and held["keys"]["cart:1"][0].value == b"book"
+    assert [(k, v.value) for k, v in held["hints"]["node4"]] == [("cart:2", b"pen")]
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before   # live files untouched
+    assert reader.read("node2") is None                                    # no folder
+
+    view = dashboard.disk_json("node1", held, Ring(list(config.nodes), config.vnodes), 3)
+    assert view["key_count"] == 1 and view["keys"][0]["versions"][0]["value"] == "book"
+    assert view["hints"] == [{"owner": "node4", "key": "cart:2",
+                              "version": {"value": "pen", "tombstone": False,
+                                          "clock": {"node2": 1}}}]
+
+
+def test_disk_reader_caches_for_a_second(tmp_path, monkeypatch):
+    (tmp_path / "node1").mkdir()
+    reader = dashboard.DiskReader(config_of(), str(tmp_path))
+    loads = []
+    monkeypatch.setattr(reader, "_load_copy", lambda src: loads.append(src) or {"keys": {}, "hints": {}})
+    reader.read("node1")
+    reader.read("node1")
+    assert len(loads) == 1
+
+
+@pytest.fixture
+async def dash_with_disk(cluster):
+    server = await asyncio.to_thread(dashboard.make_server, cluster.config, "127.0.0.1", 0, 0.2,
+                                     None, cluster.data_dir)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield Client(server.server_address[1]), cluster
+    server.app.poller.stop()
+    await asyncio.to_thread(server.shutdown)
+    server.server_close()
+    server.app.nodes.close()
+
+
+async def test_hint_on_a_stand_in_is_shown(dash_with_disk):
+    client, cluster = dash_with_disk
+    await cluster.wait_until(lambda: all_answer(client), timeout=5)
+    _, status = await client.get("/api/status")
+    assert status["config"]["disk"] is True
+    _, key = await client.get("/api/key?k=cart:9")
+    first, owner = key["replicas"][0], key["replicas"][2]
+    await cluster.kill(owner)
+
+    async def owner_not_alive():
+        _, st = await client.get("/api/status")
+        return st["nodes"][first]["answered"] and st["nodes"][first]["members"][owner]["state"] != "ALIVE"
+    await cluster.wait_until(owner_not_alive, timeout=5)
+    _, put = await client.post("/api/put", {"key": "cart:9", "value": "hinted"})
+    assert put["status"] == "OK"
+
+    async def hint_shown():
+        _, k = await client.get("/api/key?k=cart:9")
+        return any(h["owner"] == owner and h["version"]["value"] == "hinted"
+                   for hints in k["hints"].values() for h in hints)
+    await cluster.wait_until(hint_shown, timeout=5)
+    _, k = await client.get("/api/key?k=cart:9")
+    stand_in = next(n for n, hints in k["hints"].items() if hints)
+    assert stand_in not in k["replicas"]
+    _, disk = await client.get(f"/api/disk?node={stand_in}")
+    assert any(h["owner"] == owner and h["key"] == "cart:9" for h in disk["hints"])
+    assert all(row["key"] != "cart:9" for row in disk["keys"])      # a hint is not own data
+    assert (await client.get("/api/disk?node=node9"))[0] == 400
+
+
+async def test_disk_endpoint_is_off_without_data_dir(dash):
+    client, _, _ = dash
+    code, _ = await client.get("/api/disk?node=node1")
+    assert code == 404

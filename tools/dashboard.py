@@ -1,7 +1,7 @@
 """Live dashboard: node states, who sees whom, the ring, where a key is stored, put/get/delete.
 
     python -m tools.dashboard [--config cluster.local.yaml] [--port 8080] [--interval 1.0]
-                              [--control docker|local]
+                              [--control docker|local] [--data-dir data]
 
 Listens on 127.0.0.1 only (the cluster has no authentication). From another machine use an ssh
 tunnel:  ssh -L 8080:localhost:8080 user@host   then open http://localhost:8080
@@ -17,9 +17,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import asyncio
 import os
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -31,6 +34,7 @@ import grpc
 from dynamo import dynamo_pb2, dynamo_pb2_grpc
 from dynamo.config import ClusterConfig, load_config
 from dynamo.ring import RING_SIZE, Ring, hash32
+from dynamo.storage import HINTS_FILE, SNAPSHOT_FILE, WAL_FILE, Storage
 
 logger = logging.getLogger("dashboard")
 
@@ -42,6 +46,8 @@ WRITE_HEADER = "X-Dashboard"     # must be "1" on every POST (see _allowed_post)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE_ACTIONS = ("kill", "stop", "pause", "resume", "start")
 CONTROL_TIMEOUT_S = 30
+DISK_CACHE_S = 1.0               # a node's files are read at most once a second
+DISK_MAX_KEYS = 200              # keys listed per node on the page
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
 STATE_NAMES = {dynamo_pb2.ALIVE: "ALIVE", dynamo_pb2.SUSPECT: "SUSPECT",
                dynamo_pb2.DEAD: "DEAD", dynamo_pb2.MEMBER_STATE_UNSPECIFIED: "UNKNOWN"}
@@ -233,6 +239,75 @@ class Control:
         return {"ok": True, "output": f"{signal.Signals(sig).name} sent to {node_id} (pid {pid})"}
 
 
+class DiskReader:
+    """What a node has on disk: its own keys and the hints it holds.
+
+    No RPC returns hints or lists keys, so this reads the node's files: it copies
+    ``snapshot.json``, ``hints.json`` and ``wal.log`` from ``<data_dir>/<node>/`` to a temp folder
+    and loads the copy with ``Storage`` itself (same replay rules as the node). The live files are
+    only read. Works only on the machine where the nodes keep their data.
+    """
+
+    FILES = (SNAPSHOT_FILE, HINTS_FILE, WAL_FILE)
+
+    def __init__(self, config: ClusterConfig, data_dir: str) -> None:
+        self._config = config
+        self._data_dir = os.path.abspath(data_dir)
+        self._cache: dict[str, tuple[float, dict]] = {}
+        self._lock = threading.Lock()
+
+    def available(self) -> bool:
+        """True when at least one node's data folder is here."""
+        return any(os.path.isdir(os.path.join(self._data_dir, nid)) for nid in self._config.nodes)
+
+    def read(self, node_id: str) -> dict | None:
+        """{"keys": {key: [Version]}, "hints": {owner: [(key, Version)]}}, or None when the node
+        has no data folder here. A read that fails (file changing under us) gives "error".
+        Call it from a thread without a running event loop (the HTTP handler threads are)."""
+        source = os.path.join(self._data_dir, node_id)
+        if not os.path.isdir(source):
+            return None
+        with self._lock:
+            cached = self._cache.get(node_id)
+            if cached and time.monotonic() - cached[0] < DISK_CACHE_S:
+                return cached[1]
+        result = self._load_copy(source)
+        with self._lock:
+            self._cache[node_id] = (time.monotonic(), result)
+        return result
+
+    def _load_copy(self, source: str) -> dict:
+        copy = tempfile.mkdtemp(prefix="dashboard-")
+        try:
+            for name in self.FILES:
+                path = os.path.join(source, name)
+                if os.path.exists(path):
+                    shutil.copyfile(path, os.path.join(copy, name))
+            storage = Storage(copy, self._config)
+            storage.load()
+            result = {"keys": {key: storage.get(key) for key in storage.keys()},
+                      "hints": storage.hints()}
+            asyncio.run(storage.close())
+            return result
+        except Exception as error:          # a half-copied file, a snapshot in progress, ...
+            logger.warning("reading %s failed: %s", source, error)
+            return {"keys": {}, "hints": {}, "error": str(error)}
+        finally:
+            shutil.rmtree(copy, ignore_errors=True)
+
+
+def disk_json(node_id: str, held: dict, ring: Ring, n: int) -> dict:
+    """One node's stored data for the page: own keys (at most DISK_MAX_KEYS) and hints."""
+    keys = sorted(held["keys"])
+    return {"node": node_id, "error": held.get("error"),
+            "key_count": len(keys),
+            "keys": [{"key": key, "replica": node_id in ring.preference_list(key, n),
+                      "versions": [version_json(v) for v in held["keys"][key]]}
+                     for key in keys[:DISK_MAX_KEYS]],
+            "hints": [{"owner": owner, "key": key, "version": version_json(version)}
+                      for owner, items in sorted(held["hints"].items()) for key, version in items]}
+
+
 class Poller:
     """Background thread: ClusterInfo of every node once per ``interval`` seconds."""
 
@@ -336,9 +411,11 @@ class Dashboard:
     """Everything the HTTP handler needs."""
 
     def __init__(self, config: ClusterConfig, nodes: Nodes, poller: Poller,
-                 actions: Actions, control: Control | None = None) -> None:
+                 actions: Actions, control: Control | None = None,
+                 disk: DiskReader | None = None) -> None:
         self.config = config
         self.control = control
+        self.disk = disk if disk is not None and disk.available() else None
         self.nodes = nodes
         self.poller = poller
         self.actions = actions
@@ -348,7 +425,31 @@ class Dashboard:
     def key(self, key: str) -> dict:
         """Placement of a key plus what every node really holds for it."""
         return {**placement_json(self.ring, key, self.config.n),
-                "holders": holdings_json(self.nodes.local_gets(key))}
+                "holders": holdings_json(self.nodes.local_gets(key)),
+                "hints": self.key_hints(key)}
+
+    def key_hints(self, key: str) -> dict[str, list[dict]]:
+        """node -> hints it holds for ``key`` ({owner, version}); {} when disk reading is off."""
+        if self.disk is None:
+            return {}
+        found: dict[str, list[dict]] = {}
+        for node_id in self.config.nodes:
+            held = self.disk.read(node_id)
+            for owner, items in (held or {}).get("hints", {}).items():
+                for hint_key, version in items:
+                    if hint_key == key:
+                        found.setdefault(node_id, []).append(
+                            {"owner": owner, "version": version_json(version)})
+        return found
+
+    def disk_view(self, node_id: str) -> dict:
+        """Everything one node stores; LookupError when disk reading is off or no folder."""
+        if node_id not in self.config.nodes:
+            raise ValueError(f"unknown node {node_id!r}")
+        held = self.disk.read(node_id) if self.disk else None
+        if held is None:
+            raise LookupError("no data folder for this node here (start with --data-dir)")
+        return disk_json(node_id, held, self.ring, self.config.n)
 
     def node_action(self, body: dict) -> dict:
         """Kill / stop / pause / resume / start one node; LookupError if control is off."""
@@ -386,7 +487,7 @@ class Dashboard:
 
 
 class Handler(BaseHTTPRequestHandler):
-    """GET /, /api/status, /api/ring, /api/key?k=KEY;
+    """GET /, /api/status, /api/ring, /api/key?k=KEY, /api/disk?node=NODE;
     POST /api/put, /api/get, /api/delete, /api/node (node controls, only with --control)."""
 
     server_version = "dynamo-dashboard"
@@ -404,9 +505,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {**self.app.poller.snapshot(), "config": {
                 "n": self.app.config.n, "r": self.app.config.r, "w": self.app.config.w,
                 "nodes": self.app.config.nodes,
-                "control": self.app.control.mode if self.app.control else None}})
+                "control": self.app.control.mode if self.app.control else None,
+                "disk": self.app.disk is not None}})
         elif url.path == "/api/ring":
             self._json(200, self.app.ring_data)
+        elif url.path == "/api/disk":
+            try:
+                self._json(200, self.app.disk_view(parse_qs(url.query).get("node", [""])[0]))
+            except LookupError as error:
+                self._json(404, {"error": str(error)})
+            except ValueError as error:
+                self._json(400, {"error": str(error)})
         elif url.path == "/api/key":
             key = parse_qs(url.query).get("k", [""])[0]
             if not key:
@@ -468,13 +577,15 @@ def _allowed_post(headers) -> bool:
 
 
 def make_server(config: ClusterConfig, host: str, port: int, interval: float,
-                control: Control | None = None) -> ThreadingHTTPServer:
+                control: Control | None = None,
+                data_dir: str | None = None) -> ThreadingHTTPServer:
     """Build the HTTP server with its poller (started), actions and optional node control."""
     nodes = Nodes(config)
     poller = Poller(nodes, interval, control.states if control else None)
     server = ThreadingHTTPServer((host, port), Handler)
     server.app = Dashboard(config, nodes, poller,          # type: ignore[attr-defined]
-                           Actions(nodes, poller.first_answering), control)
+                           Actions(nodes, poller.first_answering), control,
+                           DiskReader(config, data_dir) if data_dir else None)
     poller.start()
     return server
 
@@ -490,10 +601,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
     parser.add_argument("--control", choices=["docker", "local"],
                         help="show Kill / Stop / Pause / Resume / Start buttons (off by default)")
+    parser.add_argument("--data-dir", default="data",
+                        help="the nodes' data folders (DIR/<node>/), read for hints and stored keys")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     control = Control(args.control) if args.control else None
-    server = make_server(load_config(args.config), args.host, args.port, args.interval, control)
+    server = make_server(load_config(args.config), args.host, args.port, args.interval, control,
+                         args.data_dir)
     logger.info("dashboard on http://%s:%d  (from another machine: ssh -L %d:localhost:%d ...)",
                 args.host, args.port, args.port, args.port)
     try:
