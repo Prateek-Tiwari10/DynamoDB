@@ -189,26 +189,28 @@ stores nothing → start node3 → ~12 s later the hint is gone and node3 stores
 
 ## 12. Change 2026-11-22: public live demo (Meet's decisions)
 Asked: anyone with the GitHub link can open the running Azure dashboard (no laptop, no tunnel),
-for live demos in interviews. Decided by Meet: **view free, a demo password for controls**;
+for live demos in interviews. Decided by Meet: **no password, everything usable by everyone**;
 **VM runs 24/7 as Standard_B1ms** (~$17/month of the $100 credit); **"Live demo" section in the
 root README, Prateek to OK it** (README is his file).
 
-- **`--public`**: every POST (put / get / delete / node controls) also needs `X-Demo-Key` equal to
-  the `DASHBOARD_KEY` environment variable (compared with `hmac.compare_digest`; a wrong key waits
-  0.5 s before the 403, to slow guessing). GET routes stay open: anyone sees node states, the grid,
-  the ring, key placement, stored data and hints. `/api/status` says `locked: true`; the page shows
-  an "Unlock controls" password box and keeps the key in `sessionStorage` (gone when the tab closes).
+- **`--public` guardrails instead of a password** (so a stranger cannot leave it broken):
+  1. *Self-healing*: a node killed / stopped / paused from the page is started / resumed by the
+     dashboard after `AUTO_HEAL_S` = 120 s if it is still down.
+  2. *At most 2 of 5 nodes down*: kill / stop / pause is refused when 2 nodes are already not
+     running (N=3, R=W=2 keeps working and there is always something to watch).
+  3. *Rate limits*: one node action per 3 s and at most 10 put / get / delete per second (whole
+     dashboard); in public mode keys are at most 100 characters and values at most 200.
+  `/api/status` reports these (`public`), and the page shows them in one line.
   Without `--public` nothing changes (local use, tests).
 - **Public address**: the dashboard still listens on 127.0.0.1:8080; **Caddy** on the VM serves it
   on ports 80/443 with automatic HTTPS (Let's Encrypt) at a free Azure DNS name
   `<label>.indiasouthcentral.cloudapp.azure.com`. Only 80/443 are opened; gRPC ports stay closed.
-- **The key** is random, kept in `/etc/dynamo-dashboard.env` (mode 600) on the VM and in Meet's
-  local untracked notes; never in git.
 - **After a reboot**: a systemd unit on the VM runs `docker compose up -d`, so the nodes come back
-  without anyone logging in (VM-only; `docker-compose.yml` unchanged, so Kill on the page still
-  leaves a node down until Start).
+  without anyone logging in (VM-only; `docker-compose.yml` unchanged, so Kill on the page leaves a
+  node down until Start or the self-heal).
 
-Rejected: everything open (a bot or stranger could leave the cluster broken before an interview);
-basic auth in Caddy (browser login pop-ups, and the read-only view is meant to be open); exposing
-gRPC; a paid domain; running only on demand (link dead unless started).
-Limits: no rate limit on GETs (each key lookup asks 5 nodes); acceptable for a demo VM.
+Rejected: a demo password (Meet: password-free); basic auth in Caddy; exposing gRPC; a paid
+domain; running only on demand (link dead unless started); per-visitor rate limits (needs the
+client address through Caddy; a global limit is enough for a demo).
+Limits: no rate limit on GETs (each key lookup asks 5 nodes); anyone can write keys (small, and
+visible to all); acceptable for a demo VM.
