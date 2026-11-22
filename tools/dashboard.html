@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamo KV Live</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2430; --muted: #667085; --line: #e3e7ee;
+    --alive: #12a150; --suspect: #e0a100; --dead: #d92d20; --none: #98a2b3;
+    --accent: #2f6fde; --chip: #eef2f8;
+    --n1: #2f6fde; --n2: #e8590c; --n3: #2b8a3e; --n4: #ae3ec9; --n5: #0b7285;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a303c;
+      --chip: #222835; --none: #5d6675;
+      --n1: #5b8ff9; --n2: #ff8a3d; --n3: #4cc36b; --n4: #d27bf0; --n5: #3bc3d6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #98a2b3; --line: #2a303c;
+    --chip: #222835; --none: #5d6675;
+    --n1: #5b8ff9; --n2: #ff8a3d; --n3: #4cc36b; --n4: #d27bf0; --n5: #3bc3d6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
+           padding: 16px 20px 4px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--muted); }
+  .meta { color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px;
+         background: var(--none); vertical-align: 1px; }
+  .dot.live { background: var(--alive); }
+  main { padding: 12px 20px 32px; display: grid; gap: 16px; max-width: 1280px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           padding: 14px 16px; min-width: 0; }
+  .row2 { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  @media (max-width: 860px) { .row2 { grid-template-columns: minmax(0, 1fr); } }
+  .cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .card { border: 1px solid var(--line); border-left: 5px solid var(--none); border-radius: 8px;
+          padding: 10px 12px; }
+  .card.up { border-left-color: var(--alive); }
+  .card.down { border-left-color: var(--dead); opacity: .85; }
+  .card .name { font-weight: 650; display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .card .big { font-size: 20px; font-weight: 650; }
+  .small { font-size: 12px; color: var(--muted); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px;
+          font-weight: 600; color: #fff; background: var(--none); }
+  .ALIVE, .OK { background: var(--alive); }
+  .SUSPECT, .NOT_FOUND { background: var(--suspect); }
+  .DEAD, .QUORUM_FAILED, .UNREACHABLE, .INVALID { background: var(--dead); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .grid td.cell { text-align: center; }
+  .scroll { overflow-x: auto; }
+  svg text { fill: var(--ink); font-size: 11px; }
+  .ringwrap { display: flex; justify-content: center; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: center; margin-top: 6px; }
+  form { display: grid; gap: 8px; }
+  .fields { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+  .fields .wide { grid-column: 1 / -1; }
+  label { font-size: 12px; color: var(--muted); display: grid; gap: 3px; }
+  input, select { font: inherit; color: var(--ink); background: var(--bg);
+                  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 13px; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 6px; padding: 7px 14px;
+           cursor: pointer; background: var(--accent); color: #fff; }
+  button.secondary { background: var(--chip); color: var(--ink); }
+  button.danger { background: var(--dead); }
+  .result { margin-top: 10px; padding: 10px; border-radius: 8px; background: var(--chip);
+            min-height: 20px; overflow-wrap: anywhere; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .chip { background: var(--chip); border: 1px solid var(--line); color: var(--ink);
+          border-radius: 999px; padding: 2px 10px; font-weight: 500; cursor: pointer; font-size: 13px; }
+  .chip.on { border-color: var(--accent); outline: 1px solid var(--accent); }
+  .ver { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--chip);
+           border: 1px solid var(--line); white-space: nowrap; }
+  .badge.owner { border-color: var(--accent); color: var(--accent); }
+  .warn { color: var(--dead); font-weight: 600; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Dynamo KV · live</h1>
+  <span class="meta" id="summary">connecting…</span>
+  <span class="meta"><span class="dot" id="livedot"></span><span id="age"></span></span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Nodes</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <div class="row2">
+    <section class="panel">
+      <h2>Ring</h2>
+      <div class="ringwrap"><svg id="ring" viewBox="0 0 360 360" width="360" height="360"
+           style="max-width:100%;height:auto" role="img" aria-label="hash ring"></svg></div>
+      <div class="legend" id="legend"></div>
+      <div class="hint">Each tick is one vnode (32 per node). The selected key is the black dot;
+        1, 2, 3 are its replicas, found clockwise.</div>
+    </section>
+    <section class="panel">
+      <h2>Who sees whom</h2>
+      <div class="scroll"><table class="grid" id="grid"></table></div>
+      <div class="hint">Row = the node asked, column = its opinion of that node (from gossip).
+        After a kill, watch the column turn SUSPECT (~5 s) then DEAD (~10 s).</div>
+    </section>
+  </div>
+
+  <div class="row2">
+    <section class="panel">
+      <h2>Put · Get · Delete</h2>
+      <form id="actions" autocomplete="off">
+        <div class="fields">
+          <label>Key<input id="f-key" required placeholder="cart:42"></label>
+          <label>Value (put)<input id="f-value" placeholder="book"></label>
+          <label>Send to node<select id="f-node"><option value="">any node that answers</option></select></label>
+          <label>R / W (0 = cluster default)<input id="f-quorum" type="number" min="0" value="0"></label>
+          <label class="check wide"><input type="checkbox" id="f-blind">
+            write without context: makes a sibling only if another node coordinates it
+            (puts are coordinated by the key's first ALIVE replica, so kill replica 1 first)</label>
+        </div>
+        <div class="buttons">
+          <button type="button" data-op="put">Put</button>
+          <button type="button" data-op="get" class="secondary">Get</button>
+          <button type="button" data-op="delete" class="danger">Delete</button>
+        </div>
+      </form>
+      <div class="result" id="result">Results show here.</div>
+    </section>
+    <section class="panel">
+      <h2>Where is a key?</h2>
+      <form id="lookup" autocomplete="off" style="grid-template-columns: 1fr auto">
+        <input id="l-key" placeholder="type a key and press Enter">
+        <button type="submit" class="secondary">Look up</button>
+      </form>
+      <div class="chips" id="recent"></div>
+      <div id="keyinfo" class="small">No key selected.</div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const COLORS = ["--n1", "--n2", "--n3", "--n4", "--n5"];
+const STATE_SHORT = { ALIVE: "ALIVE", SUSPECT: "SUSPECT", DEAD: "DEAD", UNKNOWN: "?" };
+const state = { ring: null, status: null, selected: null, recent: [], lastOk: 0, nodeIds: [] };
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function colorOf(node) { return css(COLORS[state.nodeIds.indexOf(node) % COLORS.length] || "--n1"); }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) e.append(kid);
+  return e;
+}
+function svg(tag, attrs = {}) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function pill(text) { return el("span", { class: "pill " + text, text: STATE_SHORT[text] || text }); }
+function clockText(clock) {
+  const parts = Object.entries(clock).map(([n, c]) => `${n}:${c}`);
+  return "{" + parts.join(", ") + "}";
+}
+function loadRecent() {
+  try { state.recent = JSON.parse(localStorage.getItem("dash-recent") || "[]"); } catch { state.recent = []; }
+}
+function saveRecent() { try { localStorage.setItem("dash-recent", JSON.stringify(state.recent)); } catch {} }
+function remember(key) {
+  state.recent = [key, ...state.recent.filter(k => k !== key)].slice(0, 12);
+  saveRecent();
+  state.selected = key;
+  renderRecent();
+  refreshKey();
+}
+
+// ---------- nodes ----------
+function opinions(node) {          // what the answering nodes think of `node`
+  const counts = {};
+  for (const view of Object.values(state.status.nodes)) {
+    if (!view.answered || !view.members[node]) continue;
+    const s = view.members[node].state;
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  return counts;
+}
+function renderCards() {
+  const box = document.getElementById("cards");
+  box.replaceChildren();
+  const fingerprints = new Set(Object.values(state.status.nodes).filter(v => v.answered).map(v => v.ring));
+  for (const node of state.nodeIds) {
+    const view = state.status.nodes[node] || { answered: false };
+    const own = view.answered ? view.members[node] : null;
+    const seen = el("div", { class: "small" }, "seen as ");
+    for (const [s, c] of Object.entries(opinions(node))) seen.append(pill(s), ` ×${c} `);
+    const card = el("div", { class: "card " + (view.answered ? "up" : "down") },
+      el("div", { class: "name" }, el("span", { class: "swatch", style: `background:${colorOf(node)}` }),
+         node, view.answered ? null : el("span", { class: "pill DEAD", text: "NO ANSWER" })),
+      view.answered
+        ? el("div", {}, el("span", { class: "big", text: view.live_keys }), " keys",
+             el("span", { class: "small", text: `  · ${view.tombstones} deleted` }))
+        : el("div", { class: "small", text: view.error || "" }),
+      seen,
+      own ? el("div", { class: "small",
+                        text: `heartbeat ${own.heartbeat} · up since ${new Date(own.incarnation).toLocaleTimeString()}` }) : null,
+      view.answered && fingerprints.size > 1
+        ? el("div", { class: "warn small", text: `ring ${view.ring} differs!` }) : null);
+    box.append(card);
+  }
+}
+function renderGrid() {
+  const table = document.getElementById("grid");
+  table.replaceChildren();
+  const head = el("tr", {}, el("th", { text: "asked ↓ / about →" }));
+  for (const n of state.nodeIds) head.append(el("th", { text: n }));
+  table.append(head);
+  for (const asked of state.nodeIds) {
+    const view = state.status.nodes[asked] || { answered: false };
+    const row = el("tr", {}, el("th", { text: asked }));
+    for (const about of state.nodeIds) {
+      const m = view.answered ? view.members[about] : null;
+      row.append(el("td", { class: "cell" }, m ? pill(m.state) : el("span", { class: "small", text: "—" })));
+    }
+    table.append(row);
+  }
+}
+
+// ---------- ring ----------
+function angle(position) { return position / state.ring.size * 2 * Math.PI - Math.PI / 2; }
+function point(position, radius) { return pointAt(angle(position), radius); }
+function pointAt(a, radius) { return [180 + radius * Math.cos(a), 180 + radius * Math.sin(a)]; }
+function replicaPoints(key) {      // first vnode of each replica, clockwise from the key
+  const found = [];
+  const v = state.ring.vnodes;
+  let start = v.findIndex(x => x.position >= key.position);
+  if (start < 0) start = 0;
+  for (let i = 0; i < v.length && found.length < key.replicas.length; i++) {
+    const x = v[(start + i) % v.length];
+    if (key.replicas.includes(x.node) && !found.some(f => f.node === x.node)) found.push(x);
+  }
+  return found;
+}
+function renderRing(key) {
+  const g = document.getElementById("ring");
+  g.replaceChildren();
+  g.append(svg("circle", { cx: 180, cy: 180, r: 140, fill: "none", stroke: css("--line"), "stroke-width": 2 }));
+  const down = new Set(state.status ? state.nodeIds.filter(n => !(state.status.nodes[n] || {}).answered) : []);
+  for (const v of state.ring.vnodes) {
+    const [x1, y1] = point(v.position, 132), [x2, y2] = point(v.position, 150);
+    g.append(svg("line", { x1, y1, x2, y2, stroke: colorOf(v.node), "stroke-width": 2.5,
+                           opacity: down.has(v.node) ? 0.2 : 1 }));
+  }
+  if (key) {
+    const reps = replicaPoints(key);
+    const [kx, ky] = point(key.position, 118);
+    let last = -Infinity;
+    reps.forEach((r, i) => {
+      // markers keep at least ~34 px apart along the circle, so close vnodes stay readable
+      const ahead = ((r.position - key.position) % state.ring.size + state.ring.size) % state.ring.size;
+      let a = angle(key.position) + ahead / state.ring.size * 2 * Math.PI;   // clockwise from the key
+      a = Math.max(a, last + 0.2);
+      last = a;
+      const [tx, ty] = point(r.position, 152);
+      const [rx, ry] = pointAt(a, 168);
+      g.append(svg("line", { x1: tx, y1: ty, x2: rx, y2: ry, stroke: colorOf(r.node), "stroke-width": 1 }));
+      g.append(svg("line", { x1: kx, y1: ky, x2: rx, y2: ry, stroke: colorOf(r.node),
+                             "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
+      g.append(svg("circle", { cx: rx, cy: ry, r: 9, fill: colorOf(r.node) }));
+      const t = svg("text", { x: rx, y: ry + 4, "text-anchor": "middle", "font-weight": 700 });
+      t.style.fill = "#fff"; t.textContent = i + 1; g.append(t);
+    });
+    g.append(svg("circle", { cx: kx, cy: ky, r: 6, fill: css("--ink") }));
+    const label = svg("text", { x: 180, y: 176, "text-anchor": "middle", "font-weight": 700 });
+    label.textContent = key.key; g.append(label);
+    const sub = svg("text", { x: 180, y: 194, "text-anchor": "middle" });
+    sub.textContent = "→ " + key.replicas.join(", "); g.append(sub);
+  } else {
+    const t = svg("text", { x: 180, y: 184, "text-anchor": "middle" });
+    t.textContent = `${state.nodeIds.length} nodes · ${state.ring.vnodes.length} vnodes · N=${state.ring.n}`;
+    g.append(t);
+  }
+  const legend = document.getElementById("legend");
+  legend.replaceChildren(...state.nodeIds.map(n =>
+    el("span", { class: "small" }, el("span", { class: "swatch", style: `background:${colorOf(n)}` }), " " + n)));
+}
+
+// ---------- key lookup ----------
+function renderRecent() {
+  const box = document.getElementById("recent");
+  box.replaceChildren(...state.recent.map(k =>
+    el("button", { type: "button", class: "chip" + (k === state.selected ? " on" : ""), text: k,
+                   onclick: () => { state.selected = k; renderRecent(); refreshKey(); } })));
+}
+function renderKey(key) {
+  const box = document.getElementById("keyinfo");
+  if (!key) { box.textContent = "No key selected."; return; }
+  const ownerSigs = key.replicas.map(n => JSON.stringify((key.holders[n] || {}).versions || null));
+  const agree = ownerSigs.every(s => s === ownerSigs[0]);
+  const table = el("table", {}, el("tr", {}, el("th", { text: "node" }), el("th", { text: "role" }),
+                                   el("th", { text: "stores" })));
+  key.order.forEach((node, i) => {
+    const h = key.holders[node] || { answered: false };
+    const role = i < key.replicas.length ? el("span", { class: "badge owner", text: `replica ${i + 1}` })
+                                         : el("span", { class: "badge", text: `stand-in ${i - key.replicas.length + 1}` });
+    let stores;
+    if (!h.answered) stores = el("span", { class: "pill DEAD", text: "no answer" });
+    else if (!h.versions.length) stores = el("span", { class: "small", text: "nothing" });
+    else {
+      stores = el("div");
+      h.versions.forEach((v, j) => stores.append(el("div", { class: "ver",
+        text: `${h.versions.length > 1 ? `[${j + 1}] ` : ""}${v.tombstone ? "⌫ deleted" : JSON.stringify(v.value)}  ${clockText(v.clock)}` })));
+      if (h.versions.length > 1) stores.append(el("div", { class: "warn small", text: "siblings" }));
+      if (i < key.replicas.length && !agree && JSON.stringify(h.versions) !== ownerSigs[0])
+        stores.append(el("div", { class: "warn small", text: "differs from replica 1" }));
+    }
+    table.append(el("tr", {}, el("td", {}, el("span", { class: "swatch", style: `background:${colorOf(node)}` }), " " + node),
+                     el("td", {}, role), el("td", {}, stores)));
+  });
+  box.replaceChildren(
+    el("div", { class: "small", text: `ring position ${key.position.toLocaleString()} · replicas ${key.replicas.join(", ")}` +
+                                      (agree ? "" : " · replicas disagree (read repair or anti-entropy will fix it)") }),
+    el("div", { class: "scroll" }, table),
+    el("div", { class: "hint", text: "Hints held by stand-ins are not visible here (kept apart from a node's own data)." }));
+}
+
+// ---------- polling ----------
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r.json();
+}
+let keyData = null;
+async function refreshKey() {
+  if (!state.selected) { keyData = null; renderKey(null); if (state.ring) renderRing(null); return; }
+  try {
+    keyData = await getJSON("/api/key?k=" + encodeURIComponent(state.selected));
+    renderKey(keyData); renderRing(keyData);
+  } catch (e) { document.getElementById("keyinfo").textContent = "lookup failed: " + e.message; }
+}
+async function tick() {
+  try {
+    state.status = await getJSON("/api/status");
+    state.lastOk = Date.now();
+    const c = state.status.config;
+    const up = Object.values(state.status.nodes).filter(v => v.answered).length;
+    document.getElementById("summary").textContent =
+      `${up}/${state.nodeIds.length} nodes answer · N=${c.n} R=${c.r} W=${c.w}`;
+    renderCards(); renderGrid();
+    await refreshKey();
+  } catch (e) {
+    document.getElementById("summary").textContent = "dashboard server not reachable";
+  }
+}
+function showAge() {
+  const age = state.lastOk ? Math.round((Date.now() - state.lastOk) / 1000) : null;
+  document.getElementById("age").textContent = age === null ? "" : (age <= 2 ? "live" : `last update ${age} s ago`);
+  document.getElementById("livedot").className = "dot" + (age !== null && age <= 2 ? " live" : "");
+}
+
+// ---------- actions ----------
+async function act(op) {
+  const key = document.getElementById("f-key").value.trim();
+  const out = document.getElementById("result");
+  if (!key) { out.textContent = "Type a key first."; return; }
+  const q = parseInt(document.getElementById("f-quorum").value || "0", 10) || 0;
+  const body = { key, node: document.getElementById("f-node").value };
+  if (op === "put") { body.value = document.getElementById("f-value").value; body.w = q;
+                      body.blind = document.getElementById("f-blind").checked; }
+  if (op === "get") body.r = q;
+  if (op === "delete") body.w = q;
+  out.textContent = "…";
+  try {
+    const r = await fetch("/api/" + op, { method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok) { out.replaceChildren(el("span", { class: "warn", text: data.error || r.status })); return; }
+    const parts = [pill(data.status), ` ${op} ${key}, sent to ${data.coordinator || "?"}`];
+    if (data.error) parts.push(el("div", { class: "small", text: data.error }));
+    if (data.written_to) parts.push(el("div", { class: "small", text: "written to " + data.written_to.join(", ") }));
+    if (data.read_from) parts.push(el("div", { class: "small", text: "read from " + data.read_from.join(", ") }));
+    if (data.values) {
+      if (data.values.length > 1) parts.push(el("div", { class: "warn small", text: `${data.values.length} siblings: a put now merges them` }));
+      data.values.forEach((v, i) => parts.push(el("div", { class: "ver", text: (data.values.length > 1 ? `[${i + 1}] ` : "") + JSON.stringify(v) })));
+    }
+    out.replaceChildren(...parts);
+    remember(key);
+  } catch (e) { out.textContent = "request failed: " + e.message; }
+}
+
+// ---------- start ----------
+async function start() {
+  loadRecent();
+  state.ring = await getJSON("/api/ring");
+  state.nodeIds = state.ring.nodes;
+  const select = document.getElementById("f-node");
+  for (const n of state.nodeIds) select.append(el("option", { value: n, text: n }));
+  const asked = new URLSearchParams(location.search).get("key");   // ?key=cart:42 opens that key
+  if (asked) state.recent = [asked, ...state.recent.filter(k => k !== asked)].slice(0, 12);
+  state.selected = state.recent[0] || null;
+  renderRecent();
+  renderRing(null);
+  document.querySelectorAll("#actions button").forEach(b => b.addEventListener("click", () => act(b.dataset.op)));
+  document.getElementById("lookup").addEventListener("submit", e => {
+    e.preventDefault();
+    const k = document.getElementById("l-key").value.trim();
+    if (k) remember(k);
+  });
+  await tick();
+  setInterval(tick, 1000);
+  setInterval(showAge, 500);
+}
+start().catch(e => { document.getElementById("summary").textContent = "failed to start: " + e.message; });
+</script>
+</body>
+</html>
