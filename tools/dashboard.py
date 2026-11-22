@@ -1,13 +1,15 @@
 """Live dashboard: node states, who sees whom, the ring, where a key is stored, put/get/delete.
 
     python -m tools.dashboard [--config cluster.local.yaml] [--port 8080] [--interval 1.0]
+                              [--control docker|local]
 
 Listens on 127.0.0.1 only (the cluster has no authentication). From another machine use an ssh
 tunnel:  ssh -L 8080:localhost:8080 user@host   then open http://localhost:8080
 
 Uses only the client API of the nodes: ClusterInfo (polled), LocalGet (key lookup) and
 Put / Get / Delete (the action box). Where a key belongs is computed with the same Ring code the
-nodes use.
+nodes use. With ``--control`` the node cards also get Kill / Stop / Pause / Resume / Start buttons
+(``docker compose`` for the Docker cluster, ``tools/cluster_local.sh`` for local processes).
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ import argparse
 import json
 import logging
 import os
+import signal
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -35,6 +39,9 @@ ACTION_TIMEOUT_S = 3.0           # put / get / delete (more than the node's 1.5 
 VALUE_PREVIEW = 60               # characters of a value shown on the page
 MAX_BODY = 2 * 1024 * 1024       # largest POST body accepted
 WRITE_HEADER = "X-Dashboard"     # must be "1" on every POST (see _allowed_post)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NODE_ACTIONS = ("kill", "stop", "pause", "resume", "start")
+CONTROL_TIMEOUT_S = 30
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
 STATE_NAMES = {dynamo_pb2.ALIVE: "ALIVE", dynamo_pb2.SUSPECT: "SUSPECT",
                dynamo_pb2.DEAD: "DEAD", dynamo_pb2.MEMBER_STATE_UNSPECIFIED: "UNKNOWN"}
@@ -135,14 +142,107 @@ class Nodes:
             channel.close()
 
 
+class Control:
+    """Kill / stop / pause / resume / start one node, and read each node's process state.
+
+    ``docker``: ``docker compose <action> NODE`` in the repo folder (the Docker cluster).
+    ``local``:  ``tools/cluster_local.sh kill|stop|start NODE``; pause / resume send SIGSTOP /
+    SIGCONT to the pid in ``<data_dir>/NODE.pid``.
+    Every command is a fixed argument list (no shell); the node id is checked by the caller.
+    """
+
+    DOCKER = {"kill": "kill", "stop": "stop", "pause": "pause", "resume": "unpause", "start": "start"}
+
+    def __init__(self, mode: str, root: str = REPO_ROOT, data_dir: str = "data",
+                 run: Callable = subprocess.run) -> None:
+        if mode not in ("docker", "local"):
+            raise ValueError(f"unknown control mode {mode!r}")
+        self.mode = mode
+        self._root = root
+        self._data_dir = os.path.join(root, data_dir)
+        self._run = run
+
+    def act(self, node_id: str, action: str) -> dict:
+        """Run one action on one node; ``ok`` plus the last lines of the command's output."""
+        if action not in NODE_ACTIONS:
+            raise ValueError(f"unknown action {action!r}")
+        if self.mode == "local" and action in ("pause", "resume"):
+            return self._signal(node_id, signal.SIGSTOP if action == "pause" else signal.SIGCONT)
+        if self.mode == "docker":
+            argv = ["docker", "compose", self.DOCKER[action], node_id]
+        else:
+            argv = [os.path.join("tools", "cluster_local.sh"), action, node_id]
+        try:
+            done = self._run(argv, cwd=self._root, capture_output=True, text=True,
+                             timeout=CONTROL_TIMEOUT_S)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {"ok": False, "output": str(error)}
+        output = (done.stdout + done.stderr).strip().splitlines()[-3:]
+        return {"ok": done.returncode == 0, "output": "\n".join(output)}
+
+    def states(self) -> dict[str, str]:
+        """node -> process state: running, paused, exited, ... (missing = unknown)."""
+        return self._docker_states() if self.mode == "docker" else self._local_states()
+
+    def _docker_states(self) -> dict[str, str]:
+        try:
+            done = self._run(["docker", "compose", "ps", "-a", "--format", "json"], cwd=self._root,
+                             capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+        states = {}
+        for line in done.stdout.splitlines():          # one JSON object per line
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and "Service" in item:
+                states[item["Service"]] = item.get("State", "?")
+        return states
+
+    def _pid(self, node_id: str) -> int | None:
+        try:
+            with open(os.path.join(self._data_dir, f"{node_id}.pid")) as file:
+                return int(file.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _local_states(self) -> dict[str, str]:
+        states = {}
+        for name in os.listdir(self._data_dir) if os.path.isdir(self._data_dir) else []:
+            if not name.endswith(".pid"):
+                continue
+            node_id = name[:-4]
+            pid = self._pid(node_id)
+            try:
+                with open(f"/proc/{pid}/stat") as file:
+                    flag = file.read().rsplit(")", 1)[1].split()[0]   # process state letter
+                states[node_id] = "paused" if flag == "T" else "running"
+            except (OSError, IndexError, TypeError):
+                states[node_id] = "exited"
+        return states
+
+    def _signal(self, node_id: str, sig: int) -> dict:
+        pid = self._pid(node_id)
+        if pid is None:
+            return {"ok": False, "output": f"{node_id} is not running (no pid file)"}
+        try:
+            os.kill(pid, sig)
+        except OSError as error:
+            return {"ok": False, "output": str(error)}
+        return {"ok": True, "output": f"{signal.Signals(sig).name} sent to {node_id} (pid {pid})"}
+
+
 class Poller:
     """Background thread: ClusterInfo of every node once per ``interval`` seconds."""
 
-    def __init__(self, nodes: Nodes, interval: float) -> None:
+    def __init__(self, nodes: Nodes, interval: float,
+                 process_states: Callable[[], dict[str, str]] | None = None) -> None:
         self._nodes = nodes
         self._interval = interval
+        self._process_states = process_states
         self._lock = threading.Lock()
-        self._latest: dict = {"time": 0.0, "nodes": {}}
+        self._latest: dict = {"time": 0.0, "nodes": {}, "processes": {}}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="poller", daemon=True)
 
@@ -158,8 +258,9 @@ class Poller:
     def poll_once(self) -> None:
         """Ask every node now and keep the answers."""
         views = {nid: self._nodes.info(nid) for nid in self._nodes.ids}
+        processes = self._process_states() if self._process_states else {}
         with self._lock:
-            self._latest = {"time": time.time(), "nodes": views}
+            self._latest = {"time": time.time(), "nodes": views, "processes": processes}
 
     def snapshot(self) -> dict:
         """The latest answers of all nodes."""
@@ -235,8 +336,9 @@ class Dashboard:
     """Everything the HTTP handler needs."""
 
     def __init__(self, config: ClusterConfig, nodes: Nodes, poller: Poller,
-                 actions: Actions) -> None:
+                 actions: Actions, control: Control | None = None) -> None:
         self.config = config
+        self.control = control
         self.nodes = nodes
         self.poller = poller
         self.actions = actions
@@ -247,6 +349,20 @@ class Dashboard:
         """Placement of a key plus what every node really holds for it."""
         return {**placement_json(self.ring, key, self.config.n),
                 "holders": holdings_json(self.nodes.local_gets(key))}
+
+    def node_action(self, body: dict) -> dict:
+        """Kill / stop / pause / resume / start one node; LookupError if control is off."""
+        if self.control is None:
+            raise LookupError("node control is off (start the dashboard with --control)")
+        node, action = body.get("node"), body.get("action")
+        if node not in self.config.nodes:
+            raise ValueError(f"unknown node {node!r}")
+        if action not in NODE_ACTIONS:
+            raise ValueError(f"action must be one of {', '.join(NODE_ACTIONS)}")
+        logger.info("node control: %s %s", action, node)
+        result = self.control.act(node, action)
+        self.poller.poll_once()                    # show the effect at once
+        return {"node": node, "action": action, **result}
 
     def action(self, name: str, body: dict) -> dict:
         """Run put / get / delete from a JSON body; ValueError for a bad request."""
@@ -270,7 +386,8 @@ class Dashboard:
 
 
 class Handler(BaseHTTPRequestHandler):
-    """GET /, /api/status, /api/ring, /api/key?k=KEY; POST /api/put, /api/get, /api/delete."""
+    """GET /, /api/status, /api/ring, /api/key?k=KEY;
+    POST /api/put, /api/get, /api/delete, /api/node (node controls, only with --control)."""
 
     server_version = "dynamo-dashboard"
 
@@ -286,7 +403,8 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/status":
             self._json(200, {**self.app.poller.snapshot(), "config": {
                 "n": self.app.config.n, "r": self.app.config.r, "w": self.app.config.w,
-                "nodes": self.app.config.nodes}})
+                "nodes": self.app.config.nodes,
+                "control": self.app.control.mode if self.app.control else None}})
         elif url.path == "/api/ring":
             self._json(200, self.app.ring_data)
         elif url.path == "/api/key":
@@ -300,7 +418,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         name = urlparse(self.path).path.removeprefix("/api/")
-        if name not in ("put", "get", "delete"):
+        if name not in ("put", "get", "delete", "node"):
             self._json(404, {"error": "not found"})
             return
         if not _allowed_post(self.headers):
@@ -314,7 +432,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
             if not isinstance(body, dict):
                 raise ValueError("body must be a JSON object")
-            self._json(200, self.app.action(name, body))
+            if name == "node":
+                self._json(200, self.app.node_action(body))
+            else:
+                self._json(200, self.app.action(name, body))
+        except LookupError as error:
+            self._json(404, {"error": str(error)})
         except ValueError as error:          # json.JSONDecodeError is a ValueError
             self._json(400, {"error": str(error)})
 
@@ -344,14 +467,14 @@ def _allowed_post(headers) -> bool:
             and (headers.get("Content-Type") or "").startswith("application/json"))
 
 
-def make_server(config: ClusterConfig, host: str, port: int,
-                interval: float) -> ThreadingHTTPServer:
-    """Build the HTTP server with its poller (started) and actions."""
+def make_server(config: ClusterConfig, host: str, port: int, interval: float,
+                control: Control | None = None) -> ThreadingHTTPServer:
+    """Build the HTTP server with its poller (started), actions and optional node control."""
     nodes = Nodes(config)
-    poller = Poller(nodes, interval)
+    poller = Poller(nodes, interval, control.states if control else None)
     server = ThreadingHTTPServer((host, port), Handler)
     server.app = Dashboard(config, nodes, poller,          # type: ignore[attr-defined]
-                           Actions(nodes, poller.first_answering))
+                           Actions(nodes, poller.first_answering), control)
     poller.start()
     return server
 
@@ -365,9 +488,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1", help="listen address (keep it local)")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
+    parser.add_argument("--control", choices=["docker", "local"],
+                        help="show Kill / Stop / Pause / Resume / Start buttons (off by default)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    server = make_server(load_config(args.config), args.host, args.port, args.interval)
+    control = Control(args.control) if args.control else None
+    server = make_server(load_config(args.config), args.host, args.port, args.interval, control)
     logger.info("dashboard on http://%s:%d  (from another machine: ssh -L %d:localhost:%d ...)",
                 args.host, args.port, args.port, args.port)
     try:

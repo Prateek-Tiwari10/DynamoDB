@@ -45,6 +45,8 @@
           padding: 10px 12px; }
   .card.up { border-left-color: var(--alive); }
   .card.down { border-left-color: var(--dead); opacity: .85; }
+  .ctl { margin-top: 8px; gap: 6px; }
+  .ctl button { padding: 3px 9px; font-size: 12px; }
   .card .name { font-weight: 650; display: flex; align-items: center; gap: 6px; }
   .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .card .big { font-size: 20px; font-weight: 650; }
@@ -99,6 +101,7 @@
   <section class="panel">
     <h2>Nodes</h2>
     <div class="cards" id="cards"></div>
+    <div class="result" id="nodemsg" hidden></div>
   </section>
 
   <div class="row2">
@@ -200,16 +203,42 @@ function opinions(node) {          // what the answering nodes think of `node`
   }
   return counts;
 }
+const cardEls = {};                // node -> {root, info, buttons, proc}: built once, updated in place
+const PROC_BUTTONS = {             // which controls make sense for each process state
+  running: ["pause", "stop", "kill"], paused: ["resume", "kill"],
+  exited: ["start"], created: ["start"], dead: ["start"], "?": ["pause", "resume", "stop", "kill", "start"],
+};
+const ACTION_LABEL = { kill: "Kill", stop: "Stop", pause: "Pause", resume: "Resume", start: "Start" };
+const ACTION_HELP = {
+  kill: "crash it (SIGKILL): SUSPECT ~5 s, DEAD ~10 s",
+  stop: "clean shutdown (SIGTERM)",
+  pause: "freeze it: up but silent, like a hung node; resume within 10 s to see SUSPECT → ALIVE",
+  resume: "unfreeze: same incarnation, not a restart",
+  start: "start it again: ALIVE in ~1–3 s, hints handed back",
+};
+function cardFor(node, box) {
+  if (!cardEls[node]) {
+    const c = { root: el("div", { class: "card" }), info: el("div"), buttons: el("div", { class: "buttons ctl" }), proc: null };
+    c.root.append(c.info, c.buttons);
+    box.append(c.root);
+    cardEls[node] = c;
+  }
+  return cardEls[node];
+}
 function renderCards() {
   const box = document.getElementById("cards");
-  box.replaceChildren();
+  const control = state.status.config.control;
+  const processes = state.status.processes || {};
   const fingerprints = new Set(Object.values(state.status.nodes).filter(v => v.answered).map(v => v.ring));
   for (const node of state.nodeIds) {
     const view = state.status.nodes[node] || { answered: false };
     const own = view.answered ? view.members[node] : null;
+    const proc = control ? (processes[node] || "?") : null;
+    const c = cardFor(node, box);
+    c.root.className = "card " + (view.answered ? "up" : "down");
     const seen = el("div", { class: "small" }, "seen as ");
-    for (const [s, c] of Object.entries(opinions(node))) seen.append(pill(s), ` ×${c} `);
-    const card = el("div", { class: "card " + (view.answered ? "up" : "down") },
+    for (const [s, n] of Object.entries(opinions(node))) seen.append(pill(s), ` ×${n} `);
+    c.info.replaceChildren(...[
       el("div", { class: "name" }, el("span", { class: "swatch", style: `background:${colorOf(node)}` }),
          node, view.answered ? null : el("span", { class: "pill DEAD", text: "NO ANSWER" })),
       view.answered
@@ -219,10 +248,33 @@ function renderCards() {
       seen,
       own ? el("div", { class: "small",
                         text: `heartbeat ${own.heartbeat} · up since ${new Date(own.incarnation).toLocaleTimeString()}` }) : null,
+      proc ? el("div", { class: "small" }, "process ", el("span", { class: "badge", text: proc })) : null,
       view.answered && fingerprints.size > 1
-        ? el("div", { class: "warn small", text: `ring ${view.ring} differs!` }) : null);
-    box.append(card);
+        ? el("div", { class: "warn small", text: `ring ${view.ring} differs!` }) : null,
+    ].filter(x => x != null));
+    if (proc !== c.proc) {          // rebuild buttons only when the process state changes
+      c.proc = proc;
+      c.buttons.replaceChildren(...(proc ? (PROC_BUTTONS[proc] || PROC_BUTTONS["?"]) : []).map(action =>
+        el("button", { type: "button", title: ACTION_HELP[action],
+                       class: action === "kill" ? "danger" : (action === "stop" ? "secondary" : ""),
+                       text: ACTION_LABEL[action], onclick: () => nodeAct(node, action) })));
+    }
   }
+}
+async function nodeAct(node, action) {
+  const msg = document.getElementById("nodemsg");
+  msg.textContent = `${ACTION_LABEL[action]} ${node}…`;
+  try {
+    const r = await fetch("/api/node", { method: "POST",
+      headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ node, action }) });
+    const data = await r.json();
+    const when = new Date().toLocaleTimeString();
+    if (!r.ok) msg.replaceChildren(el("span", { class: "warn", text: data.error || r.status }));
+    else msg.replaceChildren(pill(data.ok ? "OK" : "INVALID"), ` ${when}: ${ACTION_LABEL[action]} ${node}`,
+                             data.output ? el("span", { class: "small", text: " · " + data.output }) : "",
+                             el("div", { class: "small", text: ACTION_HELP[action] }));
+    await tick();
+  } catch (e) { msg.textContent = "request failed: " + e.message; }
 }
 function renderGrid() {
   const table = document.getElementById("grid");
@@ -361,6 +413,9 @@ async function tick() {
     const up = Object.values(state.status.nodes).filter(v => v.answered).length;
     document.getElementById("summary").textContent =
       `${up}/${state.nodeIds.length} nodes answer · N=${c.n} R=${c.r} W=${c.w}`;
+    document.getElementById("nodemsg").hidden = !c.control;
+    if (c.control && !document.getElementById("nodemsg").textContent)
+      document.getElementById("nodemsg").textContent = "Node controls are on: Pause makes a node SUSPECT, Kill / Stop make it DEAD, Start / Resume bring it back. Watch the grid.";
     renderCards(); renderGrid();
     await refreshKey();
   } catch (e) {

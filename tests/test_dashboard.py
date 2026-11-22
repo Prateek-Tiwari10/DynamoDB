@@ -226,3 +226,111 @@ async def test_killed_node_shows_no_answer_and_others_suspect_it(dash):
 
     code, put = await client.post("/api/put", {"key": "x", "value": "1", "node": "node3"})
     assert code == 200 and put["status"] == "UNREACHABLE"
+
+
+# ---------- node controls ----------
+
+class FakeRun:
+    """Records the commands Control would run; answers like subprocess.run."""
+
+    def __init__(self, stdout="", returncode=0):
+        self.calls = []
+        self.stdout, self.returncode = stdout, returncode
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((argv, kwargs.get("cwd")))
+        return __import__("subprocess").CompletedProcess(argv, self.returncode, self.stdout, "")
+
+
+@pytest.mark.parametrize("action, verb", [("kill", "kill"), ("stop", "stop"), ("pause", "pause"),
+                                          ("resume", "unpause"), ("start", "start")])
+def test_docker_control_runs_fixed_commands(action, verb):
+    run = FakeRun()
+    control = dashboard.Control("docker", root="/repo", run=run)
+    assert control.act("node3", action)["ok"]
+    assert run.calls == [(["docker", "compose", verb, "node3"], "/repo")]
+
+
+def test_control_rejects_unknown_actions_and_modes():
+    with pytest.raises(ValueError):
+        dashboard.Control("docker", run=FakeRun()).act("node1", "rm -rf")
+    with pytest.raises(ValueError):
+        dashboard.Control("ssh")
+
+
+def test_docker_states_parse_compose_ps():
+    out = '{"Service": "node1", "State": "running"}\n{"Service": "node2", "State": "paused"}\nbad\n'
+    control = dashboard.Control("docker", run=FakeRun(stdout=out))
+    assert control.states() == {"node1": "running", "node2": "paused"}
+
+
+def test_failed_command_is_reported():
+    control = dashboard.Control("docker", run=FakeRun(stdout="no such service", returncode=1))
+    assert control.act("node1", "kill") == {"ok": False, "output": "no such service"}
+
+
+def test_local_control_uses_cluster_script_and_signals(tmp_path):
+    import os
+    import signal
+    import subprocess
+    run = FakeRun()
+    control = dashboard.Control("local", root=str(tmp_path), run=run)
+    control.act("node2", "kill")
+    assert run.calls[0][0] == [os.path.join("tools", "cluster_local.sh"), "kill", "node2"]
+
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "node2.pid").write_text(str(child.pid))
+        assert control.states() == {"node2": "running"}
+        assert control.act("node2", "pause")["ok"]
+        for _ in range(50):                      # SIGSTOP is asynchronous
+            if control.states()["node2"] == "paused":
+                break
+            __import__("time").sleep(0.02)
+        assert control.states() == {"node2": "paused"}
+        assert control.act("node2", "resume")["ok"]
+    finally:
+        child.send_signal(signal.SIGCONT)
+        child.kill()
+        child.wait()
+    assert control.states() == {"node2": "exited"}
+    assert not control.act("node9", "pause")["ok"]        # no pid file
+
+
+async def test_node_endpoint_is_off_without_control(dash):
+    client, _, _ = dash
+    code, body = await client.post("/api/node", {"node": "node1", "action": "kill"})
+    assert code == 404 and "control is off" in body["error"]
+    _, status = await client.get("/api/status")
+    assert status["config"]["control"] is None
+
+
+@pytest.fixture
+async def dash_with_control(cluster):
+    run = FakeRun(stdout='{"Service": "node1", "State": "running"}\n')
+    control = dashboard.Control("docker", root="/repo", run=run)
+    server = await asyncio.to_thread(dashboard.make_server, cluster.config, "127.0.0.1", 0, 0.2,
+                                     control)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield Client(server.server_address[1]), run
+    server.app.poller.stop()
+    await asyncio.to_thread(server.shutdown)
+    server.server_close()
+    server.app.nodes.close()
+
+
+async def test_node_endpoint_with_control(dash_with_control):
+    client, run = dash_with_control
+    code, body = await client.post("/api/node", {"node": "node2", "action": "pause"})
+    assert code == 200 and body["ok"] and body["action"] == "pause"
+    assert (["docker", "compose", "pause", "node2"], "/repo") in run.calls
+    _, status = await client.get("/api/status")
+    assert status["config"]["control"] == "docker"
+    assert status["processes"] == {"node1": "running"}
+    assert (await client.post("/api/node", {"node": "node9", "action": "kill"}))[0] == 400
+    assert (await client.post("/api/node", {"node": "node1", "action": "rm"}))[0] == 400
+    code, _ = await client.post("/api/node", {"node": "node1", "action": "kill"},
+                                headers={"Content-Type": "application/json"})
+    assert code == 403
