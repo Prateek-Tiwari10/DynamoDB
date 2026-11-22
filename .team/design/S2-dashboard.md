@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: IMPLEMENTING (change 2026-11-22) · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -50,7 +50,7 @@ No kill / start buttons: those stay in the terminal (`docker compose kill nodeX`
 | List every key per node | There is no RPC that lists keys; a new one is a shared proto change (Prateek). Lookup by key + recent keys covers "which key is where". Could be a later DEC. |
 | Show hints held by stand-ins | Same: hints are only inside `storage`; no RPC returns them. |
 | Push updates (websocket / server-sent events) | Polling once a second is enough for a 5-node demo and much simpler. |
-| Buttons to kill / start nodes | The server would need Docker rights; a page that can kill nodes is a risk. Kill from the terminal while watching. |
+| ~~Buttons to kill / start nodes~~ | Rejected first (risk); **taken after all** on Meet's request, see §10. |
 | Contexts kept in the browser | The server already has them from the replies; one place, and the same behaviour as the CLI. |
 | Read-only page | Asked for put / get / delete; writes go through the normal coordinator path, so nothing new on the node side. |
 
@@ -129,3 +129,23 @@ Changes:
 4. Ring markers 1/2/3 are spread along the circle (replica vnodes can be a few degrees apart).
 5. On the Azure VM it runs as a systemd service `dynamo-dashboard` (127.0.0.1:8080, restarts on
    failure, starts at boot); reach it with `ssh -L 8080:localhost:8080 azureuser@<vm>`.
+
+## 10. Change 2026-11-22: node controls (Meet's decision)
+Asked: stop a node and start it again from the page, make one SUSPECT, and watch everything.
+
+- **Buttons per node card:** Kill (SIGKILL, a crash), Stop (SIGTERM, clean), Pause (freeze the
+  process: it stays up but answers nothing, like a hung or cut-off node: SUSPECT, then DEAD),
+  Resume (after Pause: same incarnation, not a restart), Start (after Kill / Stop).
+  Pause + Resume within 10 s shows SUSPECT → ALIVE without DEAD.
+- **Off by default.** `--control docker` runs `docker compose <kill|stop|start|pause|unpause> nodeX`
+  in the repo folder; `--control local` uses `tools/cluster_local.sh kill|stop|start` and
+  SIGSTOP / SIGCONT on the pid in `data/<node>.pid` for pause / resume. Without the flag the
+  buttons are hidden and `POST /api/node` answers 404.
+- **Safety:** only the config's node ids and these five actions are accepted; the command is a fixed
+  argument list (no shell); the same `X-Dashboard: 1` header guard as put/get/delete; the server
+  still listens on 127.0.0.1 only. On the VM the service user is in the `docker` group.
+- **Process state on the cards:** with control on, each round also reads the container / process
+  state (running, paused, exited), so a card says "paused" or "exited" next to what gossip says.
+
+Rejected: a separate control daemon (one more process for the same thing); sudo in the service
+(the docker group is enough); network partitions with iptables (needs root, harder to undo).
