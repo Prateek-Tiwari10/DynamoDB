@@ -430,3 +430,118 @@ async def test_disk_endpoint_is_off_without_data_dir(dash):
     client, _, _ = dash
     code, _ = await client.get("/api/disk?node=node1")
     assert code == 404
+
+
+# ---------- public mode guardrails ----------
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+class FakeControl:
+    def __init__(self):
+        self.acts = []
+
+    def act(self, node_id, action):
+        self.acts.append((node_id, action))
+        return {"ok": True, "output": ""}
+
+
+NODES = ["node1", "node2", "node3", "node4", "node5"]
+ALL_UP = {n: "running" for n in NODES}
+
+
+def test_guard_spaces_node_actions():
+    clock = Clock()
+    guard = dashboard.PublicGuard(FakeControl(), clock=clock)
+    guard.check_node_action("node1", "kill", ALL_UP, NODES)
+    with pytest.raises(dashboard.Refused):
+        guard.check_node_action("node2", "kill", ALL_UP, NODES)
+    clock.now += dashboard.ACTION_GAP_S
+    guard.check_node_action("node2", "kill", ALL_UP, NODES)
+
+
+def test_guard_keeps_at_most_two_nodes_down():
+    clock = Clock()
+    guard = dashboard.PublicGuard(FakeControl(), clock=clock, action_gap_s=0)
+    two_down = {**ALL_UP, "node1": "exited", "node2": "paused"}
+    with pytest.raises(dashboard.Refused, match="at most 2"):
+        guard.check_node_action("node3", "pause", two_down, NODES)
+    guard.check_node_action("node1", "start", two_down, NODES)       # bringing back is fine
+    guard.check_node_action("node1", "kill", two_down, NODES)        # already down: no change
+
+
+def test_guard_heals_downed_nodes_after_the_timeout():
+    clock, control = Clock(), FakeControl()
+    guard = dashboard.PublicGuard(control, clock=clock)
+    guard.record("node1", "kill")
+    guard.record("node2", "pause")
+    clock.now += 60
+    assert guard.heal_once({**ALL_UP, "node1": "exited", "node2": "paused"}) == []
+    assert guard.info()["back_in"] == {"node1": 60, "node2": 60}
+    clock.now += 60
+    done = guard.heal_once({**ALL_UP, "node1": "exited", "node2": "paused"})
+    assert sorted(done) == ["resume node2", "start node1"]
+    assert sorted(control.acts) == [("node1", "start"), ("node2", "resume")]
+    assert guard.info()["back_in"] == {}
+
+
+def test_guard_forgets_a_node_started_by_hand():
+    clock, control = Clock(), FakeControl()
+    guard = dashboard.PublicGuard(control, clock=clock)
+    guard.record("node1", "stop")
+    guard.record("node1", "start")
+    clock.now += 500
+    assert guard.heal_once({**ALL_UP, "node1": "exited"}) == [] and control.acts == []
+
+
+def test_guard_limits_writes():
+    clock = Clock()
+    guard = dashboard.PublicGuard(None, clock=clock, writes_per_s=2)
+    guard.check_write("k", "v")
+    guard.check_write("k", "v")
+    with pytest.raises(dashboard.Refused, match="per second"):
+        guard.check_write("k", "v")
+    clock.now += 1
+    guard.check_write("k", "v")
+    with pytest.raises(dashboard.Refused, match="characters"):
+        guard.check_write("k" * 101, "v")
+    with pytest.raises(dashboard.Refused, match="characters"):
+        guard.check_write("k", "v" * 201)
+
+
+@pytest.fixture
+async def dash_public(cluster):
+    run = FakeRun(stdout="".join(f'{{"Service": "{n}", "State": "running"}}\n' for n in NODES))
+    control = dashboard.Control("docker", root="/repo", run=run)
+    server = await asyncio.to_thread(dashboard.make_server, cluster.config, "127.0.0.1", 0, 0.2,
+                                     control, None, True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield Client(server.server_address[1]), cluster
+    server.healer.stop()
+    server.app.poller.stop()
+    await asyncio.to_thread(server.shutdown)
+    server.server_close()
+    server.app.nodes.close()
+
+
+async def test_public_mode_over_http(dash_public):
+    client, cluster = dash_public
+    await cluster.wait_until(lambda: all_answer(client), timeout=5)
+    _, status = await client.get("/api/status")
+    assert status["config"]["public"]["max_down"] == 2
+    code, body = await client.post("/api/node", {"node": "node1", "action": "pause"})
+    assert code == 200 and body["ok"]
+    code, body = await client.post("/api/node", {"node": "node2", "action": "pause"})
+    assert code == 429 and "every" in body["error"]                  # too soon after the first
+    _, status = await client.get("/api/status")
+    assert "node1" in status["config"]["public"]["back_in"]
+    code, put = await client.post("/api/put", {"key": "k", "value": "v" * 201})
+    assert code == 429
+    code, put = await client.post("/api/put", {"key": "k", "value": "ok"})
+    assert code == 200 and put["status"] == "OK"

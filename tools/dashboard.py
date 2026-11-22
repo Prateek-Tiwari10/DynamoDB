@@ -1,7 +1,7 @@
 """Live dashboard: node states, who sees whom, the ring, where a key is stored, put/get/delete.
 
     python -m tools.dashboard [--config cluster.local.yaml] [--port 8080] [--interval 1.0]
-                              [--control docker|local] [--data-dir data]
+                              [--control docker|local] [--data-dir data] [--public]
 
 Listens on 127.0.0.1 only (the cluster has no authentication). From another machine use an ssh
 tunnel:  ssh -L 8080:localhost:8080 user@host   then open http://localhost:8080
@@ -15,9 +15,10 @@ nodes use. With ``--control`` the node cards also get Kill / Stop / Pause / Resu
 from __future__ import annotations
 
 import argparse
+import asyncio
+import collections
 import json
 import logging
-import asyncio
 import os
 import shutil
 import signal
@@ -48,6 +49,13 @@ NODE_ACTIONS = ("kill", "stop", "pause", "resume", "start")
 CONTROL_TIMEOUT_S = 30
 DISK_CACHE_S = 1.0               # a node's files are read at most once a second
 DISK_MAX_KEYS = 200              # keys listed per node on the page
+# --public guardrails (no password: anyone can use the page, so it must not stay broken)
+AUTO_HEAL_S = 120                # a node downed from the page is brought back after this
+MAX_DOWN = 2                     # kill / stop / pause refused when this many are already down
+ACTION_GAP_S = 3.0               # at least this long between two node actions
+WRITES_PER_S = 10                # put / get / delete per second, whole dashboard
+PUBLIC_MAX_KEY = 100             # characters
+PUBLIC_MAX_VALUE = 200
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
 STATE_NAMES = {dynamo_pb2.ALIVE: "ALIVE", dynamo_pb2.SUSPECT: "SUSPECT",
                dynamo_pb2.DEAD: "DEAD", dynamo_pb2.MEMBER_STATE_UNSPECIFIED: "UNKNOWN"}
@@ -308,6 +316,122 @@ def disk_json(node_id: str, held: dict, ring: Ring, n: int) -> dict:
                       for owner, items in sorted(held["hints"].items()) for key, version in items]}
 
 
+class Refused(Exception):
+    """A request the public guardrails turn down (answered with HTTP 429)."""
+
+
+class PublicGuard:
+    """Guardrails for a password-free public dashboard.
+
+    Self-healing (nodes downed from the page come back after ``auto_heal_s``), at most
+    ``max_down`` nodes not running, one node action per ``action_gap_s``, ``writes_per_s``
+    put / get / delete per second, and short keys and values.
+    """
+
+    DOWN_ACTIONS = ("kill", "stop", "pause")
+
+    def __init__(self, control: "Control | None", clock: Callable[[], float] = time.monotonic,
+                 auto_heal_s: float = AUTO_HEAL_S, max_down: int = MAX_DOWN,
+                 action_gap_s: float = ACTION_GAP_S, writes_per_s: int = WRITES_PER_S) -> None:
+        self._control = control
+        self._clock = clock
+        self.auto_heal_s = auto_heal_s
+        self.max_down = max_down
+        self._action_gap_s = action_gap_s
+        self._writes_per_s = writes_per_s
+        self._downed: dict[str, float] = {}           # node -> when the page downed it
+        self._last_action = -float("inf")
+        self._writes: collections.deque[float] = collections.deque()
+        self._lock = threading.Lock()
+
+    def check_node_action(self, node_id: str, action: str, states: dict[str, str],
+                          node_ids: list[str]) -> None:
+        """Raise Refused if this node action is not allowed right now."""
+        now = self._clock()
+        with self._lock:
+            wait = self._last_action + self._action_gap_s - now
+            if wait > 0:
+                raise Refused(f"one node action every {self._action_gap_s:g} s: try again in {wait:.0f} s")
+            if action in self.DOWN_ACTIONS and states.get(node_id) == "running":
+                down = [n for n in node_ids if states.get(n) != "running"]
+                if len(down) >= self.max_down:
+                    raise Refused(f"public demo: at most {self.max_down} nodes down at once "
+                                  f"({', '.join(down)} already are)")
+            self._last_action = now
+
+    def record(self, node_id: str, action: str) -> None:
+        """Remember nodes the page took down (for self-healing); forget them when brought back."""
+        with self._lock:
+            if action in self.DOWN_ACTIONS:
+                self._downed.setdefault(node_id, self._clock())
+            else:
+                self._downed.pop(node_id, None)
+
+    def check_write(self, key: str, value: str) -> None:
+        """Raise Refused for a too long key / value or too many writes per second."""
+        if len(key) > PUBLIC_MAX_KEY or len(value) > PUBLIC_MAX_VALUE:
+            raise Refused(f"public demo: key at most {PUBLIC_MAX_KEY} and value at most "
+                          f"{PUBLIC_MAX_VALUE} characters")
+        now = self._clock()
+        with self._lock:
+            while self._writes and now - self._writes[0] >= 1.0:
+                self._writes.popleft()
+            if len(self._writes) >= self._writes_per_s:
+                raise Refused(f"public demo: at most {self._writes_per_s} requests per second")
+            self._writes.append(now)
+
+    def heal_once(self, states: dict[str, str]) -> list[str]:
+        """Bring back nodes downed from the page more than ``auto_heal_s`` ago. Returns what it did."""
+        now = self._clock()
+        with self._lock:
+            due = [n for n, since in self._downed.items() if now - since >= self.auto_heal_s]
+        done = []
+        for node_id in due:
+            state = states.get(node_id)
+            if state != "running" and self._control is not None:
+                action = "resume" if state == "paused" else "start"
+                result = self._control.act(node_id, action)
+                logger.info("self-heal: %s %s -> %s", action, node_id, result.get("ok"))
+                done.append(f"{action} {node_id}")
+            with self._lock:
+                self._downed.pop(node_id, None)
+        return done
+
+    def info(self) -> dict:
+        """For /api/status: the limits and, per downed node, seconds until it comes back."""
+        now = self._clock()
+        with self._lock:
+            back_in = {n: max(0, round(self.auto_heal_s - (now - since)))
+                       for n, since in self._downed.items()}
+        return {"auto_heal_s": self.auto_heal_s, "max_down": self.max_down,
+                "action_gap_s": self._action_gap_s, "writes_per_s": self._writes_per_s,
+                "back_in": back_in}
+
+
+class Healer:
+    """Background thread: every few seconds, ``guard.heal_once(control.states())``."""
+
+    def __init__(self, guard: PublicGuard, control: "Control", interval: float = 5.0) -> None:
+        self._guard = guard
+        self._control = control
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="healer", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self._guard.heal_once(self._control.states())
+            except Exception:                     # keep healing whatever one round did
+                logger.exception("self-heal round failed")
+
+
 class Poller:
     """Background thread: ClusterInfo of every node once per ``interval`` seconds."""
 
@@ -412,9 +536,10 @@ class Dashboard:
 
     def __init__(self, config: ClusterConfig, nodes: Nodes, poller: Poller,
                  actions: Actions, control: Control | None = None,
-                 disk: DiskReader | None = None) -> None:
+                 disk: DiskReader | None = None, guard: PublicGuard | None = None) -> None:
         self.config = config
         self.control = control
+        self.guard = guard
         self.disk = disk if disk is not None and disk.available() else None
         self.nodes = nodes
         self.poller = poller
@@ -460,8 +585,12 @@ class Dashboard:
             raise ValueError(f"unknown node {node!r}")
         if action not in NODE_ACTIONS:
             raise ValueError(f"action must be one of {', '.join(NODE_ACTIONS)}")
+        if self.guard is not None:
+            self.guard.check_node_action(node, action, self.control.states(), list(self.config.nodes))
         logger.info("node control: %s %s", action, node)
         result = self.control.act(node, action)
+        if self.guard is not None and result.get("ok"):
+            self.guard.record(node, action)
         self.poller.poll_once()                    # show the effect at once
         return {"node": node, "action": action, **result}
 
@@ -476,6 +605,9 @@ class Dashboard:
         quorum = body.get("r" if name == "get" else "w") or 0
         if not isinstance(quorum, int) or quorum < 0:
             raise ValueError("r / w must be a whole number >= 0")
+        if self.guard is not None:
+            value = body.get("value", "")
+            self.guard.check_write(key, value if isinstance(value, str) else "")
         if name == "put":
             value = body.get("value", "")
             if not isinstance(value, str):
@@ -506,7 +638,8 @@ class Handler(BaseHTTPRequestHandler):
                 "n": self.app.config.n, "r": self.app.config.r, "w": self.app.config.w,
                 "nodes": self.app.config.nodes,
                 "control": self.app.control.mode if self.app.control else None,
-                "disk": self.app.disk is not None}})
+                "disk": self.app.disk is not None,
+                "public": self.app.guard.info() if self.app.guard else None}})
         elif url.path == "/api/ring":
             self._json(200, self.app.ring_data)
         elif url.path == "/api/disk":
@@ -545,6 +678,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, self.app.node_action(body))
             else:
                 self._json(200, self.app.action(name, body))
+        except Refused as error:
+            self._json(429, {"error": str(error)})
         except LookupError as error:
             self._json(404, {"error": str(error)})
         except ValueError as error:          # json.JSONDecodeError is a ValueError
@@ -577,16 +712,20 @@ def _allowed_post(headers) -> bool:
 
 
 def make_server(config: ClusterConfig, host: str, port: int, interval: float,
-                control: Control | None = None,
-                data_dir: str | None = None) -> ThreadingHTTPServer:
+                control: Control | None = None, data_dir: str | None = None,
+                public: bool = False) -> ThreadingHTTPServer:
     """Build the HTTP server with its poller (started), actions and optional node control."""
     nodes = Nodes(config)
     poller = Poller(nodes, interval, control.states if control else None)
     server = ThreadingHTTPServer((host, port), Handler)
     server.app = Dashboard(config, nodes, poller,          # type: ignore[attr-defined]
                            Actions(nodes, poller.first_answering), control,
-                           DiskReader(config, data_dir) if data_dir else None)
+                           DiskReader(config, data_dir) if data_dir else None,
+                           PublicGuard(control) if public else None)
     poller.start()
+    if public and control is not None:
+        server.healer = Healer(server.app.guard, control)   # type: ignore[attr-defined]
+        server.healer.start()                                # type: ignore[attr-defined]
     return server
 
 
@@ -603,11 +742,13 @@ def main(argv: list[str] | None = None) -> None:
                         help="show Kill / Stop / Pause / Resume / Start buttons (off by default)")
     parser.add_argument("--data-dir", default="data",
                         help="the nodes' data folders (DIR/<node>/), read for hints and stored keys")
+    parser.add_argument("--public", action="store_true",
+                        help="open to anyone: self-healing, at most 2 nodes down, rate limits")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     control = Control(args.control) if args.control else None
     server = make_server(load_config(args.config), args.host, args.port, args.interval, control,
-                         args.data_dir)
+                         args.data_dir, args.public)
     logger.info("dashboard on http://%s:%d  (from another machine: ssh -L %d:localhost:%d ...)",
                 args.host, args.port, args.port, args.port)
     try:
@@ -615,6 +756,8 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if hasattr(server, "healer"):
+            server.healer.stop()
         server.app.poller.stop()            # type: ignore[attr-defined]
         server.app.nodes.close()            # type: ignore[attr-defined]
         server.server_close()

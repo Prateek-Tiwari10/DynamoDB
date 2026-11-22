@@ -97,6 +97,7 @@
 <body>
 <header>
   <h1>Dynamo KV · live</h1>
+  <span class="meta hinted" id="publicnote" hidden></span>
   <span class="meta" id="summary">connecting…</span>
   <span class="meta"><span class="dot" id="livedot"></span><span id="age"></span></span>
 </header>
@@ -257,6 +258,8 @@ function renderCards() {
       own ? el("div", { class: "small",
                         text: `heartbeat ${own.heartbeat} · up since ${new Date(own.incarnation).toLocaleTimeString()}` }) : null,
       proc ? el("div", { class: "small" }, "process ", el("span", { class: "badge", text: proc })) : null,
+      (state.status.config.public && node in state.status.config.public.back_in)
+        ? el("div", { class: "small hinted", text: `comes back by itself in ${state.status.config.public.back_in[node]} s` }) : null,
       view.answered && fingerprints.size > 1
         ? el("div", { class: "warn small", text: `ring ${view.ring} differs!` }) : null,
     ].filter(x => x != null));
@@ -474,6 +477,9 @@ async function tick() {
     document.getElementById("nodemsg").hidden = !c.control;
     if (c.control && !document.getElementById("nodemsg").textContent)
       document.getElementById("nodemsg").textContent = "Node controls are on: Pause makes a node SUSPECT, Kill / Stop make it DEAD, Start / Resume bring it back. Watch the grid.";
+    const banner = document.getElementById("publicnote");
+    banner.hidden = !c.public;
+    if (c.public) banner.textContent = `Public live demo: anyone can use it. A node you stop comes back by itself after ${Math.round(c.public.auto_heal_s / 60)} min; at most ${c.public.max_down} nodes down at once; one node action every ${c.public.action_gap_s} s.`;
     renderCards(); renderGrid();
     document.getElementById("diskpanel").hidden = !c.disk;
     if (c.disk && !diskNode) { diskNode = state.nodeIds[0]; renderDiskTabs(); }
