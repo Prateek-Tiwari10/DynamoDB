@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: IMPLEMENTING (change 2026-11-22) · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -149,3 +149,11 @@ Asked: stop a node and start it again from the page, make one SUSPECT, and watch
 
 Rejected: a separate control daemon (one more process for the same thing); sudo in the service
 (the docker group is enough); network partitions with iptables (needs root, harder to undo).
+
+### As built (§10)
+Built as in §10 (`Control` in `tools/dashboard.py`, 11 more tests with a fake command runner, 27
+dashboard tests in all). Cards are built once and updated in place; the buttons are rebuilt only
+when the process state changes, so a click is not lost to the 1 s refresh. Which buttons show
+depends on the process state (running: Pause / Stop / Kill; paused: Resume / Kill; exited: Start).
+On the VM the service runs with `--control docker`; checked live: Pause node5 → node1 sees it
+SUSPECT after 7 s → Resume → ALIVE, never DEAD.
