@@ -21,7 +21,7 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | REVIEW | .team/design/D10-chaos-cluster-tests.md | 2026-11-22 | `make cluster-test` 9/9 green on local processes (7 min); 5-min chaos: 15 faults, 31,146 acked writes, **LOST 0**, converged in 22 s (`results/chaos-20261121-2355.md`); Docker target not run yet (no Docker here); REVIEW-LATER #21–#23 |
 | D11 | Benchmarks + graphs | Meet | REVIEW | .team/design/D11-benchmarks.md | 2026-11-21 | built; `results/README.md` (4 graphs + takeaways); found restart slowdown (REVIEW-LATER #19); 400 tests pass |
-| S2 | Live dashboard (optional) | Meet | IMPLEMENTING | .team/design/S2-dashboard.md | 2026-11-22 | built: `python -m tools.dashboard` (127.0.0.1:8080, ssh tunnel); node cards, who-sees-whom grid, ring, key lookup, put/get/delete, node controls kill/stop/pause/resume/start (`--control docker`); 429 tests pass; running on the Azure VM |
+| S2 | Live dashboard (optional) | Meet | REVIEW | .team/design/S2-dashboard.md | 2026-11-22 | built: `python -m tools.dashboard` (127.0.0.1:8080, ssh tunnel); node cards, who-sees-whom grid, ring, key lookup, put/get/delete, node controls kill/stop/pause/resume/start (`--control docker`), hints + all stored data per node (read from a copy of its files); 433 tests pass; running on the Azure VM |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
@@ -114,3 +114,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-22 11:00  Meet  S2  REVIEW → IMPLEMENTING  (design change §10: node controls kill/stop/pause/resume/start, confirmed by Meet)
 - 2026-11-22 11:40  Meet  S2  IMPLEMENTING → REVIEW  (node controls; checked live on the VM: pause → SUSPECT → resume → ALIVE)
 - 2026-11-22 12:00  Meet  S2  REVIEW → IMPLEMENTING  (design change §11: hints and all stored data, read from a copy of the node's files; confirmed by Meet)
+- 2026-11-22 12:30  Meet  S2  IMPLEMENTING → REVIEW  (hints and stored data; checked live on the VM: hint shown on stand-in, delivered after restart)

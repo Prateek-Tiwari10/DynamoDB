@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: IMPLEMENTING (change 2026-11-22, §11) · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -179,3 +179,10 @@ leftover tmp files and opens the log for appending); parsing the log in the dash
 copy Prateek's replay rules instead of using them).
 Limits: a view can lag ~1 s, and during a snapshot (rename, then log cleared) one read can miss
 lines; the next read is right. On another machine than the nodes this panel is off.
+
+### As built (§11)
+Built as in §11 (`DiskReader`, `disk_json`, `/api/disk`, hints in `/api/key`; 4 more tests, 31
+dashboard tests). `DiskReader.read` must run in a thread with no event loop (it uses
+`asyncio.run(storage.close())` on the copy); the HTTP handler threads are such threads. Checked
+live on the VM: kill node3 → put `demo:hint` → node1 (stand-in) shows "hint for node3", node3
+stores nothing → start node3 → ~12 s later the hint is gone and node3 stores the value.
