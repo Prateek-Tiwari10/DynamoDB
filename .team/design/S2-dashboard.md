@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: IMPLEMENTING (change 2026-11-22, §12) · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -214,3 +214,12 @@ domain; running only on demand (link dead unless started); per-visitor rate limi
 client address through Caddy; a global limit is enough for a demo).
 Limits: no rate limit on GETs (each key lookup asks 5 nodes); anyone can write keys (small, and
 visible to all); acceptable for a demo VM.
+
+### As built (§12)
+Built as in §12 (`PublicGuard`, `Healer`, `Refused` → HTTP 429; 6 more tests, 37 dashboard tests).
+Live at https://dynamo-kv-demo.indiasouthcentral.cloudapp.azure.com (Caddy 2.6.2, Let's Encrypt
+certificate, http → https redirect; NSG rule `allow-web` opens 80/443 only; 50051 checked closed
+from outside). VM resized to Standard_B1ms; after the resize reboot the nodes (`dynamo-cluster`
+unit), the dashboard and Caddy came back by themselves (5/5 nodes on the public page ~10 s after
+boot; 717 MiB of 1.8 GiB used). Root README got a short summary + "Live demo" section (Prateek's
+file: his OK asked in PROGRESS).
