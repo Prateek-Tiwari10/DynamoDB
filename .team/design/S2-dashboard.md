@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: IMPLEMENTING (change 2026-11-22, §11) · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -157,3 +157,25 @@ when the process state changes, so a click is not lost to the 1 s refresh. Which
 depends on the process state (running: Pause / Stop / Kill; paused: Resume / Kill; exited: Start).
 On the VM the service runs with `--control docker`; checked live: Pause node5 → node1 sees it
 SUSPECT after 7 s → Resume → ALIVE, never DEAD.
+
+## 11. Change 2026-11-22: hints and everything a node stores (Meet's request)
+Asked: show hinted writes ("hint for whom") and any value on any node.
+
+- **Read from the node's files, not over gRPC.** No RPC returns hints or lists keys, and a new
+  one is a shared proto change. The dashboard runs on the same machine as the nodes, so with
+  `--data-dir DIR` (default `data`, where Docker and `cluster_local.sh` keep `DIR/<node>/`) it
+  **copies** the node's `snapshot.json`, `hints.json` and `wal.log` to a temp folder and loads the
+  copy with Prateek's own `Storage` class (`load`, `keys`, `get`, `hints`). The live files are only
+  read; recovery steps of `load` (removing tmp files, skipping a torn last line) run on the copy.
+  Cached for 1 s per node.
+- **Page:** (1) a new panel "What each node stores": one tab per node with its own keys (values,
+  clocks; at most 200 shown) and the hints it holds, each with the owner it is for; (2) the key
+  lookup table also shows, on a stand-in's row, "hint for nodeX: value".
+- Off when the data folder is missing (panel says so); `/api/disk?node=X` answers 404 then.
+
+Rejected: a `ListKeys` / `LocalHints` RPC (shared proto, DEC with Prateek; worth it if the
+dashboard must work on another machine); loading the live folder directly (`load` may delete
+leftover tmp files and opens the log for appending); parsing the log in the dashboard (would
+copy Prateek's replay rules instead of using them).
+Limits: a view can lag ~1 s, and during a snapshot (rename, then log cleared) one read can miss
+lines; the next read is right. On another machine than the nodes this panel is off.
