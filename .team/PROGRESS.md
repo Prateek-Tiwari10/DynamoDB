@@ -21,12 +21,13 @@ Each person edits only their own rows. Statuses: `TODO · DESIGNING · DESIGNED 
 | D9 | ~~Hinted handoff~~ merged into D6 (part 6b) | Prateek | — | — | 2026-11-21 | DEC-12 |
 | D10 | Chaos + cluster test suite | Prateek | REVIEW | .team/design/D10-chaos-cluster-tests.md | 2026-11-22 | `make cluster-test` 9/9 green on local processes (7 min); 5-min chaos: 15 faults, 31,146 acked writes, **LOST 0**, converged in 22 s (`results/chaos-20261121-2355.md`); Docker target not run yet (no Docker here); REVIEW-LATER #21–#23 |
 | D11 | Benchmarks + graphs | Meet | REVIEW | .team/design/D11-benchmarks.md | 2026-11-21 | built; `results/README.md` (4 graphs + takeaways); found restart slowdown (REVIEW-LATER #19); 400 tests pass |
+| S2 | Live dashboard (optional) | Meet | DESIGNING | .team/design/S2-dashboard.md | 2026-11-22 | claimed; for the Azure VM cluster |
 | D12 | Demo runbook + README + interview notes | Prateek | TODO | — | 2026-10-23 | |
 
 ## Currently
 
 - **Prateek:** next: D12 demo runbook + README + interview notes. D10, D6, D0-P, D1, D3 in REVIEW
-- **Meet:** D11, D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
+- **Meet:** S2 dashboard DESIGNING; D11, D8, D6b, D7, D0-M, D2, D4, D5 in REVIEW
 
 ## Blockers / questions for the partner
 
@@ -107,3 +108,4 @@ _Append one line per status change: `YYYY-MM-DD HH:MM  Name  ID  OLD → NEW  (s
 - 2026-11-21 23:20  Prateek  D10  TODO → DESIGNING → DESIGNED → IMPLEMENTING  (design saved; §6 no-loss rule fixed: chain of stored writes; venv on Python 3.12)
 - 2026-11-21 23:59  Meet  D11  IMPLEMENTING → REVIEW  (bench.py, results/ with 4 graphs; 400 tests pass in two halves)
 - 2026-11-22 00:10  Prateek  D10  IMPLEMENTING → REVIEW  (9/9 cluster tests green locally; 5-min chaos LOST 0; Docker run left to Meet)
+- 2026-11-22 00:40  Meet  S2  TODO → DESIGNING
