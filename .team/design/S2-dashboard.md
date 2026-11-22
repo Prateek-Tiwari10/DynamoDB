@@ -1,6 +1,6 @@
 # S2 — Live dashboard
 
-Owner: Meet · Reviewer: Prateek · Status: DESIGNED · Date: 2026-11-22
+Owner: Meet · Reviewer: Prateek · Status: REVIEW · Date: 2026-11-22
 
 ## 1. Requirement
 TASKS S2 / SPEC: a page showing the ring, node states and key counts per node. Asked for now:
@@ -117,4 +117,15 @@ JSON `/api/status`: `{"time": ..., "nodes": {"node1": {"answered": true, "live_k
    gives access only to whoever has the ssh key.
 
 ## 9. As built
-<filled after implementation>
+Built as designed (`tools/dashboard.py`, `tools/dashboard.html`, `tests/test_dashboard.py` 16 tests).
+Changes:
+1. A key's placement comes from the dashboard's own `Ring` (same code and config as the nodes)
+   instead of the `Locate` RPC, so it still works when nodes are down; `LocalGet` still asks every
+   node what it really stores. The page also lists the stand-in order after the N replicas.
+2. "Coordinator" became "Send to node": a Put sent to any node is coordinated by the key's first
+   ALIVE replica (D5 routing), so a blind put makes a sibling only when replica 1 is down. Found by
+   the sibling test; the test now kills replica 1 first, and the page says so.
+3. `?key=KEY` in the URL opens that key directly.
+4. Ring markers 1/2/3 are spread along the circle (replica vnodes can be a few degrees apart).
+5. On the Azure VM it runs as a systemd service `dynamo-dashboard` (127.0.0.1:8080, restarts on
+   failure, starts at boot); reach it with `ssh -L 8080:localhost:8080 azureuser@<vm>`.
